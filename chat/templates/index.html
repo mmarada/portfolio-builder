@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job Hunter</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #1e293b; height: 100vh; overflow: hidden; }
+  .layout { display: grid; grid-template-columns: 320px 1fr 380px; height: 100vh; }
+
+  /* ── Sidebar ── */
+  .sidebar { background: #fff; border-right: 1px solid #e2e8f0; overflow-y: auto; display: flex; flex-direction: column; }
+  .sidebar-header { padding: 16px; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; }
+  .sidebar-header h1 { font-size: 16px; font-weight: 700; }
+  .upload-btn { font-size: 12px; background: #0f172a; color: #fff; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+  /* Job type checkboxes */
+  .type-bar { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; display: flex; gap: 14px; align-items: center; }
+  .type-bar label { font-size: 12px; font-weight: 500; color: #374151; display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+  .type-bar input[type=checkbox] { width: 14px; height: 14px; accent-color: #0f172a; cursor: pointer; }
+  .type-bar .type-label { font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: .06em; margin-right: 4px; }
+  /* Source filters */
+  .filter-bar { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; display: flex; gap: 5px; flex-wrap: wrap; }
+  .filter-pill { font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 99px; border: 1px solid #e2e8f0; background: #f8fafc; color: #64748b; cursor: pointer; text-decoration: none; white-space: nowrap; transition: all .15s; }
+  .filter-pill:hover { background: #e0f2fe; border-color: #0ea5e9; color: #0369a1; }
+  .filter-pill.active { background: #0f172a; border-color: #0f172a; color: #fff; }
+  /* Source colour dots */
+  .filter-pill[data-src="linkedin"]   { --dot: #0a66c2; }
+  .filter-pill[data-src="indeed"]     { --dot: #003a9b; }
+  .filter-pill[data-src="lever"]      { --dot: #2563eb; }
+  .filter-pill[data-src="greenhouse"] { --dot: #16a34a; }
+  .filter-pill[data-src="yc"]         { --dot: #f97316; }
+  .filter-pill[data-src="sp500"]      { --dot: #7c3aed; }
+  .filter-pill[data-src="jobright"]   { --dot: #0891b2; }
+  .filter-pill[data-src="career_page"]{ --dot: #64748b; }
+  .job-card { padding: 14px 16px; border-bottom: 1px solid #f1f5f9; cursor: pointer; transition: background .15s; }
+  .job-card:hover, .job-card.active { background: #f0f9ff; }
+  .job-card.active { border-left: 3px solid #0ea5e9; }
+  .job-title { font-size: 13px; font-weight: 600; color: #0f172a; }
+  .job-meta { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 99px; }
+  .badge-high { background: #dcfce7; color: #16a34a; }
+  .badge-mid  { background: #fef9c3; color: #ca8a04; }
+  .badge-low  { background: #fee2e2; color: #dc2626; }
+  .source-tag { background: #f1f5f9; color: #475569; font-size: 10px; padding: 1px 6px; border-radius: 99px; }
+
+  /* ── Main ── */
+  .main { overflow-y: auto; padding: 24px; }
+  .job-detail { background: #fff; border-radius: 12px; border: 1px solid #e2e8f0; padding: 24px; }
+  .job-detail h2 { font-size: 20px; font-weight: 700; }
+  .job-detail .company { font-size: 14px; color: #475569; margin-top: 4px; }
+  .tags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .tag { font-size: 12px; background: #f1f5f9; color: #475569; padding: 4px 10px; border-radius: 6px; }
+  .action-row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  .btn { padding: 8px 16px; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; text-decoration: none; }
+  .btn-primary { background: #0f172a; color: #fff; }
+  .btn-secondary { background: #f1f5f9; color: #0f172a; }
+  .btn-green { background: #16a34a; color: #fff; }
+  .btn-red { background: #dc2626; color: #fff; }
+  .ai-result { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-top: 16px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+  .contacts-section { margin-top: 20px; }
+  .contacts-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .contact-chip { display: inline-flex; align-items: center; gap: 8px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 6px 10px; margin: 4px 4px 4px 0; font-size: 12px; }
+  .contact-chip a { color: #0369a1; }
+  .desc-body { margin-top: 16px; font-size: 13px; line-height: 1.7; color: #374151; max-height: 300px; overflow-y: auto; }
+  .section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #94a3b8; margin-bottom: 8px; margin-top: 20px; }
+  .empty { text-align: center; padding: 60px 24px; color: #94a3b8; }
+
+  /* ── Chat ── */
+  .chat-panel { background: #fff; border-left: 1px solid #e2e8f0; display: flex; flex-direction: column; }
+  .chat-header { padding: 16px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; }
+  .chat-header h2 { font-size: 15px; font-weight: 600; }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 88%; padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.5; }
+  .msg-user { align-self: flex-end; background: #0f172a; color: #fff; border-bottom-right-radius: 3px; }
+  .msg-bot  { align-self: flex-start; background: #f1f5f9; color: #1e293b; border-bottom-left-radius: 3px; white-space: pre-wrap; }
+  .msg-typing { opacity: .6; }
+  .chat-input-area { padding: 12px 16px; border-top: 1px solid #e2e8f0; display: flex; gap: 8px; }
+  .chat-input-area textarea { flex: 1; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 12px; font-size: 13px; resize: none; height: 48px; outline: none; font-family: inherit; }
+  .chat-input-area textarea:focus { border-color: #0ea5e9; }
+  .send-btn { background: #0f172a; color: #fff; border: none; border-radius: 8px; padding: 0 16px; cursor: pointer; font-size: 14px; }
+  .quick-btns { padding: 8px 16px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .quick-btn { font-size: 11px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+  .quick-btn:hover { background: #e2e8f0; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #94a3b8; border-top-color: #0f172a; border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- Sidebar: job list -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1>Job Hunter</h1>
+      <button class="upload-btn" onclick="document.getElementById('resumeInput').click()">Upload Resume</button>
+      <input type="file" id="resumeInput" accept=".pdf,.docx,.doc,.txt" style="display:none" onchange="uploadResume(this)">
+    </div>
+
+    <!-- Job type checkboxes -->
+    <div class="type-bar">
+      <span class="type-label">Type</span>
+      <label>
+        <input type="checkbox" id="chk-fulltime"
+               {% if not active_job_type or active_job_type == 'full_time' %}checked{% endif %}
+               onchange="applyTypeFilter()">
+        Full Time
+      </label>
+      <label>
+        <input type="checkbox" id="chk-intern"
+               {% if not active_job_type or active_job_type == 'intern' %}checked{% endif %}
+               onchange="applyTypeFilter()">
+        Intern
+      </label>
+    </div>
+
+    <!-- Source filter pills -->
+    <div class="filter-bar">
+      <a href="/{% if active_job_type %}?job_type={{ active_job_type }}{% endif %}"
+         class="filter-pill {% if not active_source %}active{% endif %}">All</a>
+      {% for src in sources %}
+      <a href="/?source={{ src }}{% if active_job_type %}&job_type={{ active_job_type }}{% endif %}"
+         class="filter-pill {% if active_source == src %}active{% endif %}" data-src="{{ src }}">
+        {{ src | replace('_', ' ') | title }}
+      </a>
+      {% endfor %}
+    </div>
+
+    {% if jobs %}
+      {% for job in jobs %}
+      <div class="job-card {% if selected_job and selected_job.id == job.id %}active{% endif %}"
+           onclick="selectJob({{ job.id }})" id="card-{{ job.id }}">
+        <div class="job-title">{{ job.title }}</div>
+        <div class="job-meta">{{ job.company }} · {{ job.location or 'Remote' }}</div>
+        <div style="margin-top:5px;display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+          {% set pct = (job.match_score * 100) | int %}
+          <span class="badge {% if pct >= 75 %}badge-high{% elif pct >= 55 %}badge-mid{% else %}badge-low{% endif %}">{{ pct }}%</span>
+          <span class="source-tag">{{ job.source }}</span>
+          {% if job.applied %}<span class="source-tag" style="background:#dcfce7;color:#16a34a">✓ Applied</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty">No jobs yet.<br>Run <code>python main.py</code> to scrape.</div>
+    {% endif %}
+  </aside>
+
+  <!-- Main: job detail -->
+  <main class="main" id="main">
+    {% if selected_job %}
+    <div class="job-detail" id="job-detail">
+      <h2 id="jd-title">{{ selected_job.title }}</h2>
+      <p class="company" id="jd-company">{{ selected_job.company }} · {{ selected_job.location or 'Remote' }}</p>
+      <div class="tags">
+        <span class="tag">{{ selected_job.source }}</span>
+        {% set pct = (selected_job.match_score * 100) | int %}
+        <span class="tag">{{ pct }}% match</span>
+        {% if selected_job.posted_date %}<span class="tag">Posted: {{ selected_job.posted_date[:10] }}</span>{% endif %}
+      </div>
+
+      <div class="action-row">
+        <a href="{{ selected_job.url }}" target="_blank" class="btn btn-primary">View Job ↗</a>
+        <button class="btn btn-secondary" onclick="summarizeJob({{ selected_job.id }})">Summarize</button>
+        <button class="btn btn-secondary" onclick="gapAnalysis({{ selected_job.id }})">Gap Analysis</button>
+        <button class="btn btn-green" onclick="markApplied({{ selected_job.id }})">Mark Applied</button>
+        <button class="btn btn-red" onclick="dismissJob({{ selected_job.id }})">Dismiss</button>
+      </div>
+
+      <div id="ai-output"></div>
+
+      {% if selected_job.contacts %}
+      <div class="contacts-section">
+        <div class="section-title">Hiring Contacts</div>
+        {% for entry in selected_job.contacts.split(';;') %}
+          {% set parts = entry.split('|') %}
+          {% if parts|length >= 3 %}
+          <div class="contact-chip">
+            <strong>{{ parts[0] }}</strong>
+            <span style="color:#64748b">{{ parts[1] }}</span>
+            {% if parts[2] %}<a href="{{ parts[2] }}" target="_blank">LinkedIn ↗</a>{% endif %}
+            {% if parts|length > 3 and parts[3] %}<a href="mailto:{{ parts[3] }}">Email</a>{% endif %}
+          </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="section-title" style="margin-top:20px">Job Description</div>
+      <div class="desc-body" id="jd-desc">{{ selected_job.description or 'No description available.' }}</div>
+    </div>
+    {% else %}
+      <div class="empty" style="margin-top:80px">
+        Select a job from the list to view details.<br>
+        Run <code>python main.py</code> to populate jobs.
+      </div>
+    {% endif %}
+  </main>
+
+  <!-- Chat panel -->
+  <aside class="chat-panel">
+    <div class="chat-header">
+      <h2>AI Assistant</h2>
+      <button class="btn btn-secondary" style="font-size:11px;padding:4px 8px" onclick="resetChat()">Reset</button>
+    </div>
+    <div class="quick-btns">
+      <button class="quick-btn" onclick="sendQuick('Summarize this job for me')">Summarize</button>
+      <button class="quick-btn" onclick="sendQuick('What am I missing for this role?')">Gap Analysis</button>
+      <button class="quick-btn" onclick="sendQuick('What skills should I highlight in my application?')">Skills to highlight</button>
+      <button class="quick-btn" onclick="sendQuick('Is this company a good culture fit based on the description?')">Culture fit</button>
+    </div>
+    <div class="chat-messages" id="chat-messages">
+      <div class="msg msg-bot">Hi! Select a job and ask me anything — I can summarize the description, identify skill gaps, or help you prep your application. 👋</div>
+    </div>
+    <div class="chat-input-area">
+      <textarea id="chat-input" placeholder="Ask about this job..." onkeydown="handleKey(event)"></textarea>
+      <button class="send-btn" onclick="sendChat()">↑</button>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+  let currentJobId = {{ selected_job.id if selected_job else 'null' }};
+  const activeSource  = "{{ active_source }}";
+  const activeJobType = "{{ active_job_type }}";
+
+  function _buildParams(extra = {}) {
+    const p = new URLSearchParams();
+    if (activeSource)  p.set('source', activeSource);
+    // Reconstruct job_type from checkboxes (or server-side value on first load)
+    const ft = document.getElementById('chk-fulltime')?.checked;
+    const it = document.getElementById('chk-intern')?.checked;
+    if (ft && !it)  p.set('job_type', 'full_time');
+    if (it && !ft)  p.set('job_type', 'intern');
+    // Both or neither = no filter
+    for (const [k, v] of Object.entries(extra)) p.set(k, v);
+    return p;
+  }
+
+  function applyTypeFilter() {
+    const params = _buildParams();
+    if (currentJobId) params.set('job_id', currentJobId);
+    window.location.href = '/?' + params.toString();
+  }
+
+  function selectJob(jobId) {
+    currentJobId = jobId;
+    const params = _buildParams({ job_id: jobId });
+    window.location.href = '/?' + params.toString();
+  }
+
+  async function summarizeJob(jobId) {
+    showAiOutput('<div class="spinner"></div> Summarizing…');
+    try {
+      const r = await fetch(`/api/jobs/${jobId}/summarize`, { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || `Server error ${r.status}`);
+      if (!d.summary) throw new Error('Empty response from AI');
+      showAiOutput(`<strong>Summary</strong><br>${d.summary}`);
+    } catch (e) {
+      showAiOutput(`<span style="color:#dc2626">⚠ Summarize failed: ${e.message}</span>`);
+    }
+  }
+
+  async function gapAnalysis(jobId) {
+    showAiOutput('<div class="spinner"></div> Analyzing gaps…');
+    try {
+      const r = await fetch(`/api/jobs/${jobId}/gap-analysis`, { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || `Server error ${r.status}`);
+      if (!d.analysis) throw new Error('Empty response from AI');
+      showAiOutput(`<strong>Gap Analysis</strong><br><pre style="white-space:pre-wrap;font-family:inherit;font-size:13px">${d.analysis}</pre>`);
+    } catch (e) {
+      showAiOutput(`<span style="color:#dc2626">⚠ Gap analysis failed: ${e.message}</span>`);
+    }
+  }
+
+  async function dismissJob(jobId) {
+    await fetch(`/api/jobs/${jobId}/dismiss`, { method: 'POST' });
+    document.getElementById(`card-${jobId}`)?.remove();
+    document.getElementById('job-detail')?.remove();
+  }
+
+  async function markApplied(jobId) {
+    await fetch(`/api/jobs/${jobId}/applied`, { method: 'POST' });
+    showAiOutput('<strong style="color:#16a34a">Marked as Applied ✓</strong>');
+  }
+
+  function showAiOutput(html) {
+    const el = document.getElementById('ai-output');
+    el.innerHTML = `<div class="ai-result">${html}</div>`;
+  }
+
+  async function sendChat() {
+    const input = document.getElementById('chat-input');
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    appendMsg(text, 'user');
+    const typingEl = appendMsg('…', 'bot typing');
+
+    const form = new FormData();
+    form.append('message', text);
+    if (currentJobId) form.append('job_id', currentJobId);
+
+    try {
+      const r = await fetch('/api/chat', { method: 'POST', body: form });
+      const d = await r.json();
+      typingEl.remove();
+      if (!r.ok) {
+        appendMsg(`⚠ Error ${r.status}: ${d.detail || 'AI request failed'}`, 'bot');
+      } else if (!d.response) {
+        appendMsg("⚠ No response from AI — please try again.", 'bot');
+      } else {
+        appendMsg(d.response, 'bot');
+      }
+    } catch (e) {
+      typingEl.remove();
+      appendMsg(`⚠ Network error: ${e.message}`, 'bot');
+    }
+    scrollChat();
+  }
+
+  function sendQuick(text) {
+    document.getElementById('chat-input').value = text;
+    sendChat();
+  }
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  }
+
+  function appendMsg(text, type) {
+    const el = document.createElement('div');
+    el.className = `msg msg-${type.replace(' typing', '')}${type.includes('typing') ? ' msg-typing' : ''}`;
+    el.textContent = text;
+    document.getElementById('chat-messages').appendChild(el);
+    scrollChat();
+    return el;
+  }
+
+  function scrollChat() {
+    const el = document.getElementById('chat-messages');
+    el.scrollTop = el.scrollHeight;
+  }
+
+  async function resetChat() {
+    await fetch('/api/chat/reset', { method: 'POST' });
+    document.getElementById('chat-messages').innerHTML =
+      '<div class="msg msg-bot">Chat reset. Ask me anything about the selected job.</div>';
+  }
+
+  async function uploadResume(input) {
+    const file = input.files[0];
+    if (!file) return;
+    appendMsg(`Uploading ${file.name}…`, 'bot');
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const r = await fetch('/api/resume/upload', { method: 'POST', body: form });
+      const d = await r.json();
+      if (r.ok && d.status === 'ok') {
+        appendMsg(`✓ Resume loaded: ${d.filename} (${d.chars} chars, kind: ${d.kind}). Gap analysis is now available.`, 'bot');
+      } else {
+        appendMsg(`⚠ Upload failed: ${d.detail || 'Could not parse resume'}`, 'bot');
+      }
+    } catch (e) {
+      appendMsg(`⚠ Upload error: ${e.message}`, 'bot');
+    }
+  }
+</script>
+</body>
+</html>

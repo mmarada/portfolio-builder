@@ -1,0 +1,25 @@
+.rocketride/
+
+# Secrets — never commit these
+.env
+credentials.json
+token.json
+
+# Local data, resumes, logs
+data/
+resume/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+
+# macOS
+.DS_Store
+
+# Playwright
+/ms-playwright/
