@@ -352,6 +352,38 @@ def get_job(job_id: int) -> dict | None:
             return dict(row) if row else None
 
 
+def get_stats() -> dict:
+    """Return aggregate counts: total, applied, avg match score (pct), by_source."""
+    sql_sqlite = """
+        SELECT
+            COUNT(*)                                    AS total,
+            SUM(CASE WHEN applied=1 THEN 1 ELSE 0 END) AS applied,
+            ROUND(AVG(match_score) * 100)               AS avg_score_pct
+        FROM jobs WHERE dismissed=0
+    """
+    sql_pg = """
+        SELECT
+            COUNT(*)                                         AS total,
+            SUM(CASE WHEN applied=1 THEN 1 ELSE 0 END)      AS applied,
+            ROUND(AVG(match_score)::numeric * 100)::integer  AS avg_score_pct
+        FROM jobs WHERE dismissed=0
+    """
+    src_sql_sqlite = "SELECT source, COUNT(*) AS cnt FROM jobs WHERE dismissed=0 GROUP BY source ORDER BY cnt DESC"
+    src_sql_pg     = src_sql_sqlite
+    with get_conn() as conn:
+        if _pg():
+            cur = conn.cursor()
+            cur.execute(sql_pg)
+            row = dict(cur.fetchone())
+            cur.execute(src_sql_pg)
+            by_source = {r["source"]: r["cnt"] for r in cur.fetchall()}
+        else:
+            row = dict(conn.execute(sql_sqlite).fetchone())
+            by_source = {r["source"]: r["cnt"] for r in conn.execute(src_sql_sqlite).fetchall()}
+    row["by_source"] = by_source
+    return row
+
+
 def get_draft(job_id: int) -> dict | None:
     ph = "%s" if _pg() else "?"
     sql = f"SELECT * FROM drafts WHERE job_id={ph} ORDER BY created_at DESC LIMIT 1"

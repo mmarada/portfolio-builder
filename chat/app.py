@@ -16,7 +16,7 @@ from fastapi.requests import Request
 import ai.chat_engine as engine
 from ai.job_matcher import set_resume
 from ai.resume_parser import parse_resume
-from db.database import init_db, get_top_jobs, get_distinct_sources, get_job, dismiss_job, mark_applied
+from db.database import init_db, get_top_jobs, get_distinct_sources, get_job, dismiss_job, mark_applied, get_stats
 from config import RESUME_DIR
 
 log = logging.getLogger(__name__)
@@ -60,6 +60,11 @@ async def index(
 
 
 # ── API ───────────────────────────────────────────────────────────────────────
+
+@app.get("/api/stats")
+async def api_stats():
+    return get_stats()
+
 
 @app.get("/api/jobs")
 async def api_jobs(

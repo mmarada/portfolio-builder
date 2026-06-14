@@ -43,6 +43,17 @@
   .badge-mid  { background: #fef9c3; color: #ca8a04; }
   .badge-low  { background: #fee2e2; color: #dc2626; }
   .source-tag { background: #f1f5f9; color: #475569; font-size: 10px; padding: 1px 6px; border-radius: 99px; }
+  /* ── Search bar ── */
+  .search-bar { padding: 9px 12px; border-bottom: 1px solid #f1f5f9; position: relative; }
+  .search-bar input { width: 100%; border: 1px solid #e2e8f0; border-radius: 8px; padding: 7px 10px 7px 30px; font-size: 13px; outline: none; font-family: inherit; background: #f8fafc; color: #1e293b; }
+  .search-bar input:focus { border-color: #0ea5e9; background: #fff; }
+  .search-bar .search-icon { position: absolute; left: 21px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 13px; pointer-events: none; }
+  .search-count { font-size: 11px; color: #94a3b8; margin-top: 4px; min-height: 14px; }
+  .job-card.hidden { display: none; }
+  /* ── Stats bar ── */
+  .stats-bar { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; display: flex; gap: 14px; align-items: center; background: #fafbfc; }
+  .stat-chip { font-size: 11px; color: #64748b; display: flex; align-items: center; gap: 4px; }
+  .stat-chip strong { color: #0f172a; font-size: 12px; }
 
   /* ── Main ── */
   .main { overflow-y: auto; padding: 24px; }
@@ -95,6 +106,20 @@
       <h1>Job Hunter</h1>
       <button class="upload-btn" onclick="document.getElementById('resumeInput').click()">Upload Resume</button>
       <input type="file" id="resumeInput" accept=".pdf,.docx,.doc,.txt" style="display:none" onchange="uploadResume(this)">
+    </div>
+
+    <!-- Stats bar -->
+    <div class="stats-bar" id="stats-bar">
+      <div class="stat-chip"><strong id="stat-total">—</strong> jobs</div>
+      <div class="stat-chip"><strong id="stat-applied">—</strong> applied</div>
+      <div class="stat-chip">avg <strong id="stat-avg">—</strong>%</div>
+    </div>
+
+    <!-- Search -->
+    <div class="search-bar">
+      <span class="search-icon">⌕</span>
+      <input type="search" id="job-search" placeholder="Search title or company…" oninput="filterJobs()" autocomplete="off">
+      <div class="search-count" id="search-count"></div>
     </div>
 
     <!-- Job type checkboxes -->
@@ -223,6 +248,34 @@
   let currentJobId = {{ selected_job.id if selected_job else 'null' }};
   const activeSource  = "{{ active_source }}";
   const activeJobType = "{{ active_job_type }}";
+
+  // ── Search ────────────────────────────────────────────────────────────────
+  function filterJobs() {
+    const q = document.getElementById('job-search').value.toLowerCase().trim();
+    const cards = document.querySelectorAll('.job-card');
+    let visible = 0;
+    cards.forEach(card => {
+      const text = card.textContent.toLowerCase();
+      const match = !q || text.includes(q);
+      card.classList.toggle('hidden', !match);
+      if (match) visible++;
+    });
+    const countEl = document.getElementById('search-count');
+    countEl.textContent = q ? `${visible} of ${cards.length} shown` : '';
+  }
+
+  // ── Stats bar ─────────────────────────────────────────────────────────────
+  async function initStats() {
+    try {
+      const r = await fetch('/api/stats');
+      if (!r.ok) return;
+      const d = await r.json();
+      document.getElementById('stat-total').textContent   = d.total   ?? '—';
+      document.getElementById('stat-applied').textContent = d.applied ?? '—';
+      document.getElementById('stat-avg').textContent     = d.avg_score_pct != null ? d.avg_score_pct : '—';
+    } catch (_) {}
+  }
+  initStats();
 
   function _buildParams(extra = {}) {
     const p = new URLSearchParams();
