@@ -384,6 +384,33 @@ def get_stats() -> dict:
     return row
 
 
+def get_applied_jobs() -> list[dict]:
+    """Return all applied (not dismissed) jobs ordered by most recently scraped."""
+    sql_sqlite = """
+        SELECT id, title, company, location, url, source, job_type,
+               ROUND(match_score * 100) AS match_pct,
+               scraped_at AS applied_date
+        FROM jobs
+        WHERE applied=1 AND dismissed=0
+        ORDER BY scraped_at DESC
+    """
+    sql_pg = """
+        SELECT id, title, company, location, url, source, job_type,
+               ROUND(match_score::numeric * 100)::integer AS match_pct,
+               scraped_at::date AS applied_date
+        FROM jobs
+        WHERE applied=1 AND dismissed=0
+        ORDER BY scraped_at DESC
+    """
+    with get_conn() as conn:
+        if _pg():
+            cur = conn.cursor()
+            cur.execute(sql_pg)
+            return [dict(r) for r in cur.fetchall()]
+        else:
+            return [dict(r) for r in conn.execute(sql_sqlite).fetchall()]
+
+
 def get_draft(job_id: int) -> dict | None:
     ph = "%s" if _pg() else "?"
     sql = f"SELECT * FROM drafts WHERE job_id={ph} ORDER BY created_at DESC LIMIT 1"

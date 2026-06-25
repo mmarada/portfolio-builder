@@ -2,6 +2,8 @@
 FastAPI chat + job browser app.
 Run: python main.py --chat
 """
+import csv
+import io
 import logging
 import shutil
 from contextlib import asynccontextmanager
@@ -9,14 +11,14 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 
 import ai.chat_engine as engine
 from ai.job_matcher import set_resume
 from ai.resume_parser import parse_resume
-from db.database import init_db, get_top_jobs, get_distinct_sources, get_job, dismiss_job, mark_applied, get_stats
+from db.database import init_db, get_top_jobs, get_distinct_sources, get_job, dismiss_job, mark_applied, get_stats, get_applied_jobs
 from config import RESUME_DIR
 
 log = logging.getLogger(__name__)
@@ -64,6 +66,25 @@ async def index(
 @app.get("/api/stats")
 async def api_stats():
     return get_stats()
+
+
+@app.get("/api/jobs/export/applied.csv")
+async def export_applied_csv():
+    jobs = get_applied_jobs()
+    buf = io.StringIO()
+    writer = csv.DictWriter(
+        buf,
+        fieldnames=["id", "title", "company", "location", "url", "source", "job_type", "match_pct", "applied_date"],
+        extrasaction="ignore",
+    )
+    writer.writeheader()
+    writer.writerows(jobs)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=applied_jobs.csv"},
+    )
 
 
 @app.get("/api/jobs")
