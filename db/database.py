@@ -104,6 +104,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_source  ON jobs(source);
 _MIGRATIONS_SQLITE = [
     "ALTER TABLE jobs ADD COLUMN digest_sent INTEGER DEFAULT 0",
     "ALTER TABLE jobs ADD COLUMN job_type TEXT DEFAULT 'full_time'",
+    "ALTER TABLE jobs ADD COLUMN kanban_status TEXT DEFAULT 'applied'",
 ]
 
 # ── Connection context managers ───────────────────────────────────────────────
@@ -382,6 +383,50 @@ def get_stats() -> dict:
             by_source = {r["source"]: r["cnt"] for r in conn.execute(src_sql_sqlite).fetchall()}
     row["by_source"] = by_source
     return row
+
+
+def update_kanban_status(job_id: int, status: str):
+    ph = "%s" if _pg() else "?"
+    with get_conn() as conn:
+        if _pg():
+            conn.cursor().execute(f"UPDATE jobs SET kanban_status={ph} WHERE id={ph}", (status, job_id))
+        else:
+            conn.execute(f"UPDATE jobs SET kanban_status={ph} WHERE id={ph}", (status, job_id))
+
+
+def get_kanban_jobs() -> dict[str, list[dict]]:
+    """Return applied jobs grouped by kanban_status."""
+    sql_sqlite = """
+        SELECT id, title, company, location, url, source, job_type,
+               ROUND(match_score * 100) AS match_pct,
+               COALESCE(kanban_status, 'applied') AS kanban_status
+        FROM jobs
+        WHERE applied=1 AND dismissed=0
+        ORDER BY scraped_at DESC
+    """
+    sql_pg = """
+        SELECT id, title, company, location, url, source, job_type,
+               ROUND(match_score::numeric * 100)::integer AS match_pct,
+               COALESCE(kanban_status, 'applied') AS kanban_status
+        FROM jobs
+        WHERE applied=1 AND dismissed=0
+        ORDER BY scraped_at DESC
+    """
+    with get_conn() as conn:
+        if _pg():
+            cur = conn.cursor()
+            cur.execute(sql_pg)
+            rows = [dict(r) for r in cur.fetchall()]
+        else:
+            rows = [dict(r) for r in conn.execute(sql_sqlite).fetchall()]
+
+    columns: dict[str, list[dict]] = {"applied": [], "screening": [], "interview": [], "offer": []}
+    for row in rows:
+        col = row.get("kanban_status") or "applied"
+        if col not in columns:
+            col = "applied"
+        columns[col].append(row)
+    return columns
 
 
 def get_applied_jobs() -> list[dict]:

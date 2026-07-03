@@ -18,7 +18,10 @@ from fastapi.requests import Request
 import ai.chat_engine as engine
 from ai.job_matcher import set_resume
 from ai.resume_parser import parse_resume
-from db.database import init_db, get_top_jobs, get_distinct_sources, get_job, dismiss_job, mark_applied, get_stats, get_applied_jobs
+from db.database import (
+    init_db, get_top_jobs, get_distinct_sources, get_job, dismiss_job,
+    mark_applied, get_stats, get_applied_jobs, get_kanban_jobs, update_kanban_status,
+)
 from config import RESUME_DIR
 
 log = logging.getLogger(__name__)
@@ -150,6 +153,21 @@ async def api_dismiss(job_id: int):
 async def api_applied(job_id: int):
     mark_applied(job_id)
     return {"status": "marked_applied"}
+
+
+@app.get("/kanban", response_class=HTMLResponse)
+async def kanban_page(request: Request):
+    columns = get_kanban_jobs()
+    return templates.TemplateResponse("kanban.html", {"request": request, "columns": columns})
+
+
+@app.patch("/api/jobs/{job_id}/kanban-status")
+async def api_kanban_status(job_id: int, status: str):
+    valid = {"applied", "screening", "interview", "offer"}
+    if status not in valid:
+        raise HTTPException(400, f"status must be one of {sorted(valid)}")
+    update_kanban_status(job_id, status)
+    return {"status": status}
 
 
 @app.post("/api/chat")

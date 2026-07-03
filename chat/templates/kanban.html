@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Application Kanban — Job Hunter</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f1f5f9; color: #1e293b; min-height: 100vh; }
+  .topbar { background: #0f172a; color: #fff; padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+  .topbar h1 { font-size: 16px; font-weight: 700; }
+  .topbar a { font-size: 13px; color: #94a3b8; text-decoration: none; }
+  .topbar a:hover { color: #fff; }
+  .board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 24px; height: calc(100vh - 52px); overflow-x: auto; }
+
+  /* Column */
+  .col { background: #e2e8f0; border-radius: 12px; display: flex; flex-direction: column; min-height: 0; }
+  .col-header { padding: 12px 14px; display: flex; align-items: center; gap: 8px; border-bottom: 2px solid; border-radius: 12px 12px 0 0; }
+  .col[data-col="applied"]   .col-header { background: #dbeafe; border-color: #3b82f6; }
+  .col[data-col="screening"] .col-header { background: #fef3c7; border-color: #f59e0b; }
+  .col[data-col="interview"] .col-header { background: #ede9fe; border-color: #7c3aed; }
+  .col[data-col="offer"]     .col-header { background: #dcfce7; border-color: #16a34a; }
+  .col-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+  .col[data-col="applied"]   .col-title { color: #1d4ed8; }
+  .col[data-col="screening"] .col-title { color: #b45309; }
+  .col[data-col="interview"] .col-title { color: #6d28d9; }
+  .col[data-col="offer"]     .col-title { color: #15803d; }
+  .col-count { font-size: 11px; font-weight: 600; background: #fff; border-radius: 99px; padding: 1px 7px; color: #64748b; }
+
+  /* Drop zone */
+  .col-body { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 80px; }
+  .col-body.drag-over { background: #cbd5e1; border-radius: 0 0 12px 12px; outline: 2px dashed #94a3b8; }
+
+  /* Cards */
+  .kanban-card { background: #fff; border-radius: 8px; padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); cursor: grab; border: 1px solid #e2e8f0; transition: box-shadow .15s, transform .1s; }
+  .kanban-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.12); }
+  .kanban-card.dragging { opacity: .45; cursor: grabbing; transform: scale(.97); }
+  .card-title { font-size: 13px; font-weight: 600; color: #0f172a; line-height: 1.3; }
+  .card-company { font-size: 12px; color: #64748b; margin-top: 3px; }
+  .card-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 7px; }
+  .tag { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 99px; }
+  .tag-match-high { background: #dcfce7; color: #16a34a; }
+  .tag-match-mid  { background: #fef9c3; color: #ca8a04; }
+  .tag-match-low  { background: #fee2e2; color: #dc2626; }
+  .tag-source { background: #f1f5f9; color: #475569; }
+  .card-link { font-size: 11px; color: #0369a1; text-decoration: none; display: inline-block; margin-top: 6px; }
+  .card-link:hover { text-decoration: underline; }
+  .empty-col { font-size: 12px; color: #94a3b8; text-align: center; padding: 20px 8px; }
+
+  /* Move buttons */
+  .card-actions { display: flex; gap: 5px; margin-top: 8px; flex-wrap: wrap; }
+  .move-btn { font-size: 10px; padding: 2px 7px; border-radius: 99px; border: 1px solid #e2e8f0; background: #f8fafc; color: #475569; cursor: pointer; }
+  .move-btn:hover { background: #e2e8f0; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>📋 Application Kanban</h1>
+  <a href="/">← Back to Job List</a>
+  <span style="margin-left:auto;font-size:12px;color:#64748b">Drag cards between columns to track your progress</span>
+</div>
+
+<div class="board">
+  {% set col_meta = [
+    ("applied",   "Applied",   "📨"),
+    ("screening", "Screening", "📞"),
+    ("interview", "Interview", "🎤"),
+    ("offer",     "Offer",     "🎉"),
+  ] %}
+
+  {% for col_id, col_label, col_icon in col_meta %}
+  <div class="col" data-col="{{ col_id }}">
+    <div class="col-header">
+      <span>{{ col_icon }}</span>
+      <span class="col-title">{{ col_label }}</span>
+      <span class="col-count" id="count-{{ col_id }}">{{ columns[col_id] | length }}</span>
+    </div>
+    <div class="col-body" id="col-{{ col_id }}"
+         ondragover="onDragOver(event)"
+         ondragleave="onDragLeave(event)"
+         ondrop="onDrop(event, '{{ col_id }}')">
+      {% if columns[col_id] %}
+        {% for job in columns[col_id] %}
+        <div class="kanban-card"
+             draggable="true"
+             id="job-{{ job.id }}"
+             data-job-id="{{ job.id }}"
+             data-col="{{ col_id }}"
+             ondragstart="onDragStart(event)">
+          <div class="card-title">{{ job.title }}</div>
+          <div class="card-company">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
+          <div class="card-tags">
+            {% set pct = job.match_pct | int %}
+            <span class="tag {% if pct >= 75 %}tag-match-high{% elif pct >= 55 %}tag-match-mid{% else %}tag-match-low{% endif %}">{{ pct }}%</span>
+            <span class="tag tag-source">{{ job.source }}</span>
+          </div>
+          <a class="card-link" href="{{ job.url }}" target="_blank" onclick="event.stopPropagation()">View ↗</a>
+          <div class="card-actions">
+            {% for next_id, next_label in [("applied","Applied"),("screening","Screening"),("interview","Interview"),("offer","Offer")] %}
+              {% if next_id != col_id %}
+              <button class="move-btn" onclick="moveCard({{ job.id }}, '{{ next_id }}')">→ {{ next_label }}</button>
+              {% endif %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty-col" id="empty-{{ col_id }}">No applications here yet</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+  let draggedId = null;
+  let draggedFromCol = null;
+
+  function onDragStart(e) {
+    draggedId = e.currentTarget.dataset.jobId;
+    draggedFromCol = e.currentTarget.dataset.col;
+    e.currentTarget.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  document.addEventListener('dragend', e => {
+    document.querySelectorAll('.kanban-card').forEach(c => c.classList.remove('dragging'));
+    document.querySelectorAll('.col-body').forEach(b => b.classList.remove('drag-over'));
+  });
+
+  function onDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    e.currentTarget.classList.add('drag-over');
+  }
+
+  function onDragLeave(e) {
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      e.currentTarget.classList.remove('drag-over');
+    }
+  }
+
+  function onDrop(e, targetCol) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drag-over');
+    if (!draggedId || targetCol === draggedFromCol) return;
+    moveCard(parseInt(draggedId), targetCol);
+  }
+
+  async function moveCard(jobId, targetCol) {
+    const card = document.getElementById(`job-${jobId}`);
+    if (!card) return;
+    const fromCol = card.dataset.col;
+    if (fromCol === targetCol) return;
+
+    // Optimistic move
+    const fromBody = document.getElementById(`col-${fromCol}`);
+    const toBody   = document.getElementById(`col-${targetCol}`);
+    card.dataset.col = targetCol;
+    toBody.appendChild(card);
+    updateEmptyState(fromCol);
+    updateEmptyState(targetCol);
+    updateCount(fromCol);
+    updateCount(targetCol);
+
+    // Rebuild move buttons for new column context
+    rebuildMoveButtons(card, targetCol);
+
+    try {
+      const r = await fetch(`/api/jobs/${jobId}/kanban-status?status=${targetCol}`, { method: 'PATCH' });
+      if (!r.ok) throw new Error('server error');
+    } catch (_) {
+      // Rollback: move card back
+      card.dataset.col = fromCol;
+      fromBody.appendChild(card);
+      updateEmptyState(fromCol);
+      updateEmptyState(targetCol);
+      updateCount(fromCol);
+      updateCount(targetCol);
+      rebuildMoveButtons(card, fromCol);
+    }
+  }
+
+  function updateEmptyState(colId) {
+    const body  = document.getElementById(`col-${colId}`);
+    const emptyEl = document.getElementById(`empty-${colId}`);
+    const cards = body.querySelectorAll('.kanban-card');
+    if (cards.length === 0) {
+      if (!emptyEl) {
+        const d = document.createElement('div');
+        d.className = 'empty-col';
+        d.id = `empty-${colId}`;
+        d.textContent = 'No applications here yet';
+        body.appendChild(d);
+      }
+    } else if (emptyEl) {
+      emptyEl.remove();
+    }
+  }
+
+  function updateCount(colId) {
+    const body  = document.getElementById(`col-${colId}`);
+    const count = body.querySelectorAll('.kanban-card').length;
+    document.getElementById(`count-${colId}`).textContent = count;
+  }
+
+  const COL_LABELS = { applied: 'Applied', screening: 'Screening', interview: 'Interview', offer: 'Offer' };
+
+  function rebuildMoveButtons(card, currentCol) {
+    const actionsDiv = card.querySelector('.card-actions');
+    if (!actionsDiv) return;
+    actionsDiv.innerHTML = '';
+    for (const [id, label] of Object.entries(COL_LABELS)) {
+      if (id === currentCol) continue;
+      const btn = document.createElement('button');
+      btn.className = 'move-btn';
+      btn.textContent = `→ ${label}`;
+      btn.onclick = () => moveCard(parseInt(card.dataset.jobId), id);
+      actionsDiv.appendChild(btn);
+    }
+  }
+</script>
+</body>
+</html>
