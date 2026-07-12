@@ -20,7 +20,8 @@ from ai.job_matcher import set_resume
 from ai.resume_parser import parse_resume
 from db.database import (
     init_db, get_top_jobs, get_distinct_sources, get_job, dismiss_job,
-    mark_applied, get_stats, get_applied_jobs, get_kanban_jobs, update_kanban_status,
+    mark_applied, get_stats, get_applied_jobs, get_all_jobs_for_export,
+    get_kanban_jobs, update_kanban_status,
 )
 from config import RESUME_DIR
 
@@ -87,6 +88,25 @@ async def export_applied_csv():
         iter([buf.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=applied_jobs.csv"},
+    )
+
+
+@app.get("/api/jobs/export/all.csv")
+async def export_all_csv():
+    jobs = get_all_jobs_for_export()
+    buf = io.StringIO()
+    writer = csv.DictWriter(
+        buf,
+        fieldnames=["id", "title", "company", "location", "url", "source", "job_type", "match_pct", "status", "scraped_at"],
+        extrasaction="ignore",
+    )
+    writer.writeheader()
+    writer.writerows(jobs)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=all_jobs.csv"},
     )
 
 

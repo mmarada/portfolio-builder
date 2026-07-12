@@ -456,6 +456,40 @@ def get_applied_jobs() -> list[dict]:
             return [dict(r) for r in conn.execute(sql_sqlite).fetchall()]
 
 
+def get_all_jobs_for_export() -> list[dict]:
+    """Return every non-dismissed job with a computed status column, most recent first."""
+    sql_sqlite = """
+        SELECT id, title, company, location, url, source, job_type,
+               ROUND(match_score * 100) AS match_pct,
+               applied, COALESCE(kanban_status, 'applied') AS kanban_status,
+               scraped_at
+        FROM jobs
+        WHERE dismissed=0
+        ORDER BY scraped_at DESC
+    """
+    sql_pg = """
+        SELECT id, title, company, location, url, source, job_type,
+               ROUND(match_score::numeric * 100)::integer AS match_pct,
+               applied, COALESCE(kanban_status, 'applied') AS kanban_status,
+               scraped_at::date AS scraped_at
+        FROM jobs
+        WHERE dismissed=0
+        ORDER BY scraped_at DESC
+    """
+    with get_conn() as conn:
+        if _pg():
+            cur = conn.cursor()
+            cur.execute(sql_pg)
+            rows = [dict(r) for r in cur.fetchall()]
+        else:
+            rows = [dict(r) for r in conn.execute(sql_sqlite).fetchall()]
+
+    for row in rows:
+        row["status"] = row["kanban_status"] if row.pop("applied") else "not applied"
+        row.pop("kanban_status", None)
+    return rows
+
+
 def get_draft(job_id: int) -> dict | None:
     ph = "%s" if _pg() else "?"
     sql = f"SELECT * FROM drafts WHERE job_id={ph} ORDER BY created_at DESC LIMIT 1"

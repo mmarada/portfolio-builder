@@ -107,7 +107,8 @@
       <h1>Job Hunter</h1>
       <div style="display:flex;gap:6px;align-items:center">
         <a href="/kanban" class="export-btn" style="background:#7c3aed">Kanban</a>
-        <a href="/api/jobs/export/applied.csv" class="export-btn" download>Export CSV</a>
+        <a href="/api/jobs/export/applied.csv" class="export-btn" download>Export Applied</a>
+        <a href="/api/jobs/export/all.csv" class="export-btn" download>Export All</a>
         <button class="upload-btn" onclick="document.getElementById('resumeInput').click()">Upload Resume</button>
       </div>
       <input type="file" id="resumeInput" accept=".pdf,.docx,.doc,.txt" style="display:none" onchange="uploadResume(this)">
