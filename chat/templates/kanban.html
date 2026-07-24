@@ -48,9 +48,18 @@
   .empty-col { font-size: 12px; color: #94a3b8; text-align: center; padding: 20px 8px; }
 
   /* Move buttons */
-  .card-actions { display: flex; gap: 5px; margin-top: 8px; flex-wrap: wrap; }
+  .card-actions { display: flex; gap: 5px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
   .move-btn { font-size: 10px; padding: 2px 7px; border-radius: 99px; border: 1px solid #e2e8f0; background: #f8fafc; color: #475569; cursor: pointer; }
   .move-btn:hover { background: #e2e8f0; }
+
+  /* Notes */
+  .note-btn { font-size: 11px; padding: 2px 6px; border-radius: 99px; border: 1px solid #e2e8f0; background: #f8fafc; color: #94a3b8; cursor: pointer; margin-left: auto; }
+  .note-btn.has-note { color: #b45309; background: #fef3c7; border-color: #f59e0b; }
+  .note-preview { font-size: 11px; color: #64748b; margin-top: 6px; padding: 6px 8px; background: #f8fafc; border-radius: 6px; white-space: pre-wrap; word-break: break-word; }
+  .note-box { margin-top: 8px; }
+  .note-box textarea { width: 100%; font: inherit; font-size: 11px; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; resize: vertical; min-height: 44px; }
+  .note-saved { font-size: 10px; color: #16a34a; margin-left: 6px; opacity: 0; transition: opacity .2s; }
+  .note-saved.show { opacity: 1; }
 </style>
 </head>
 <body>
@@ -96,12 +105,22 @@
             <span class="tag tag-source">{{ job.source }}</span>
           </div>
           <a class="card-link" href="{{ job.url }}" target="_blank" onclick="event.stopPropagation()">View ↗</a>
+          {% if job.notes %}
+          <div class="note-preview" id="note-preview-{{ job.id }}">{{ job.notes }}</div>
+          {% endif %}
+          <div class="note-box" id="note-box-{{ job.id }}" style="display:none">
+            <textarea id="note-input-{{ job.id }}" placeholder="Add a note…" maxlength="2000"
+                      onblur="saveNote({{ job.id }})">{{ job.notes }}</textarea>
+            <span class="note-saved" id="note-saved-{{ job.id }}">Saved</span>
+          </div>
           <div class="card-actions">
             {% for next_id, next_label in [("applied","Applied"),("screening","Screening"),("interview","Interview"),("offer","Offer")] %}
               {% if next_id != col_id %}
               <button class="move-btn" onclick="moveCard({{ job.id }}, '{{ next_id }}')">→ {{ next_label }}</button>
               {% endif %}
             {% endfor %}
+            <button class="note-btn {% if job.notes %}has-note{% endif %}" id="note-btn-{{ job.id }}"
+                    onclick="toggleNote({{ job.id }})">📝 Note</button>
           </div>
         </div>
         {% endfor %}
@@ -210,6 +229,7 @@
   function rebuildMoveButtons(card, currentCol) {
     const actionsDiv = card.querySelector('.card-actions');
     if (!actionsDiv) return;
+    const noteBtn = actionsDiv.querySelector('.note-btn');
     actionsDiv.innerHTML = '';
     for (const [id, label] of Object.entries(COL_LABELS)) {
       if (id === currentCol) continue;
@@ -218,6 +238,42 @@
       btn.textContent = `→ ${label}`;
       btn.onclick = () => moveCard(parseInt(card.dataset.jobId), id);
       actionsDiv.appendChild(btn);
+    }
+    if (noteBtn) actionsDiv.appendChild(noteBtn);
+  }
+
+  function toggleNote(jobId) {
+    const box = document.getElementById(`note-box-${jobId}`);
+    const open = box.style.display !== 'none';
+    box.style.display = open ? 'none' : 'block';
+    if (!open) document.getElementById(`note-input-${jobId}`).focus();
+  }
+
+  async function saveNote(jobId) {
+    const textarea = document.getElementById(`note-input-${jobId}`);
+    const note = textarea.value.trim();
+    const btn = document.getElementById(`note-btn-${jobId}`);
+    const savedTag = document.getElementById(`note-saved-${jobId}`);
+    try {
+      const r = await fetch(`/api/jobs/${jobId}/note?note=${encodeURIComponent(note)}`, { method: 'PATCH' });
+      if (!r.ok) throw new Error('server error');
+      btn.classList.toggle('has-note', note.length > 0);
+      let preview = document.getElementById(`note-preview-${jobId}`);
+      if (note) {
+        if (!preview) {
+          preview = document.createElement('div');
+          preview.className = 'note-preview';
+          preview.id = `note-preview-${jobId}`;
+          textarea.closest('.kanban-card').insertBefore(preview, document.getElementById(`note-box-${jobId}`));
+        }
+        preview.textContent = note;
+      } else if (preview) {
+        preview.remove();
+      }
+      savedTag.classList.add('show');
+      setTimeout(() => savedTag.classList.remove('show'), 1200);
+    } catch (_) {
+      // leave textarea open with unsaved text on failure
     }
   }
 </script>

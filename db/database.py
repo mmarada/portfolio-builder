@@ -99,12 +99,14 @@ CREATE TABLE IF NOT EXISTS drafts (
 CREATE INDEX IF NOT EXISTS idx_jobs_score   ON jobs(match_score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_scraped ON jobs(scraped_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_source  ON jobs(source);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
 """
 
 _MIGRATIONS_SQLITE = [
     "ALTER TABLE jobs ADD COLUMN digest_sent INTEGER DEFAULT 0",
     "ALTER TABLE jobs ADD COLUMN job_type TEXT DEFAULT 'full_time'",
     "ALTER TABLE jobs ADD COLUMN kanban_status TEXT DEFAULT 'applied'",
+    "ALTER TABLE jobs ADD COLUMN notes TEXT DEFAULT ''",
 ]
 
 # ── Connection context managers ───────────────────────────────────────────────
@@ -394,12 +396,22 @@ def update_kanban_status(job_id: int, status: str):
             conn.execute(f"UPDATE jobs SET kanban_status={ph} WHERE id={ph}", (status, job_id))
 
 
+def update_job_note(job_id: int, note: str):
+    ph = "%s" if _pg() else "?"
+    with get_conn() as conn:
+        if _pg():
+            conn.cursor().execute(f"UPDATE jobs SET notes={ph} WHERE id={ph}", (note, job_id))
+        else:
+            conn.execute(f"UPDATE jobs SET notes={ph} WHERE id={ph}", (note, job_id))
+
+
 def get_kanban_jobs() -> dict[str, list[dict]]:
     """Return applied jobs grouped by kanban_status."""
     sql_sqlite = """
         SELECT id, title, company, location, url, source, job_type,
                ROUND(match_score * 100) AS match_pct,
-               COALESCE(kanban_status, 'applied') AS kanban_status
+               COALESCE(kanban_status, 'applied') AS kanban_status,
+               COALESCE(notes, '') AS notes
         FROM jobs
         WHERE applied=1 AND dismissed=0
         ORDER BY scraped_at DESC
@@ -407,7 +419,8 @@ def get_kanban_jobs() -> dict[str, list[dict]]:
     sql_pg = """
         SELECT id, title, company, location, url, source, job_type,
                ROUND(match_score::numeric * 100)::integer AS match_pct,
-               COALESCE(kanban_status, 'applied') AS kanban_status
+               COALESCE(kanban_status, 'applied') AS kanban_status,
+               COALESCE(notes, '') AS notes
         FROM jobs
         WHERE applied=1 AND dismissed=0
         ORDER BY scraped_at DESC

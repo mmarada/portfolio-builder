@@ -21,7 +21,7 @@ from ai.resume_parser import parse_resume
 from db.database import (
     init_db, get_top_jobs, get_distinct_sources, get_job, dismiss_job,
     mark_applied, get_stats, get_applied_jobs, get_all_jobs_for_export,
-    get_kanban_jobs, update_kanban_status,
+    get_kanban_jobs, update_kanban_status, update_job_note,
 )
 from config import RESUME_DIR
 
@@ -188,6 +188,13 @@ async def api_kanban_status(job_id: int, status: str):
         raise HTTPException(400, f"status must be one of {sorted(valid)}")
     update_kanban_status(job_id, status)
     return {"status": status}
+
+
+@app.patch("/api/jobs/{job_id}/note")
+async def api_job_note(job_id: int, note: str = ""):
+    note = note.strip()[:2000]
+    update_job_note(job_id, note)
+    return {"notes": note}
 
 
 @app.post("/api/chat")
