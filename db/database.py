@@ -6,6 +6,7 @@ Dual-mode database layer.
 import os
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Optional
 
 _PG_URL = os.getenv("DATABASE_URL", "")
@@ -100,6 +101,11 @@ CREATE INDEX IF NOT EXISTS idx_jobs_score   ON jobs(match_score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_scraped ON jobs(scraped_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_source  ON jobs(source);
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS kanban_status TEXT DEFAULT 'applied';
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS screening_at TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interview_at TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS offer_at TIMESTAMPTZ;
 """
 
 _MIGRATIONS_SQLITE = [
@@ -107,7 +113,18 @@ _MIGRATIONS_SQLITE = [
     "ALTER TABLE jobs ADD COLUMN job_type TEXT DEFAULT 'full_time'",
     "ALTER TABLE jobs ADD COLUMN kanban_status TEXT DEFAULT 'applied'",
     "ALTER TABLE jobs ADD COLUMN notes TEXT DEFAULT ''",
+    "ALTER TABLE jobs ADD COLUMN applied_at TEXT",
+    "ALTER TABLE jobs ADD COLUMN screening_at TEXT",
+    "ALTER TABLE jobs ADD COLUMN interview_at TEXT",
+    "ALTER TABLE jobs ADD COLUMN offer_at TEXT",
 ]
+
+# Stage → timestamp column, for stamping first-time kanban transitions.
+_STAGE_TIMESTAMP_COLUMNS = {
+    "screening": "screening_at",
+    "interview": "interview_at",
+    "offer": "offer_at",
+}
 
 # ── Connection context managers ───────────────────────────────────────────────
 
@@ -260,11 +277,13 @@ def dismiss_job(job_id: int):
 
 def mark_applied(job_id: int):
     ph = "%s" if _pg() else "?"
+    now_expr = "NOW()" if _pg() else "CURRENT_TIMESTAMP"
+    sql = f"UPDATE jobs SET applied=1, applied_at=COALESCE(applied_at, {now_expr}) WHERE id={ph}"
     with get_conn() as conn:
         if _pg():
-            conn.cursor().execute(f"UPDATE jobs SET applied=1 WHERE id={ph}", (job_id,))
+            conn.cursor().execute(sql, (job_id,))
         else:
-            conn.execute(f"UPDATE jobs SET applied=1 WHERE id={ph}", (job_id,))
+            conn.execute(sql, (job_id,))
 
 
 def mark_digest_sent(job_ids: list[int]):
@@ -389,11 +408,17 @@ def get_stats() -> dict:
 
 def update_kanban_status(job_id: int, status: str):
     ph = "%s" if _pg() else "?"
+    now_expr = "NOW()" if _pg() else "CURRENT_TIMESTAMP"
+    stage_col = _STAGE_TIMESTAMP_COLUMNS.get(status)
+    if stage_col:
+        sql = f"UPDATE jobs SET kanban_status={ph}, {stage_col}=COALESCE({stage_col}, {now_expr}) WHERE id={ph}"
+    else:
+        sql = f"UPDATE jobs SET kanban_status={ph} WHERE id={ph}"
     with get_conn() as conn:
         if _pg():
-            conn.cursor().execute(f"UPDATE jobs SET kanban_status={ph} WHERE id={ph}", (status, job_id))
+            conn.cursor().execute(sql, (status, job_id))
         else:
-            conn.execute(f"UPDATE jobs SET kanban_status={ph} WHERE id={ph}", (status, job_id))
+            conn.execute(sql, (status, job_id))
 
 
 def update_job_note(job_id: int, note: str):
@@ -405,13 +430,28 @@ def update_job_note(job_id: int, note: str):
             conn.execute(f"UPDATE jobs SET notes={ph} WHERE id={ph}", (note, job_id))
 
 
+def _days_since(ts) -> Optional[int]:
+    """Whole days elapsed since a stored timestamp (SQLite TEXT or Postgres TIMESTAMPTZ)."""
+    if not ts:
+        return None
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts.replace(" ", "T", 1).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return max(0, (datetime.now(timezone.utc) - ts).days)
+
+
 def get_kanban_jobs() -> dict[str, list[dict]]:
     """Return applied jobs grouped by kanban_status."""
     sql_sqlite = """
         SELECT id, title, company, location, url, source, job_type,
                ROUND(match_score * 100) AS match_pct,
                COALESCE(kanban_status, 'applied') AS kanban_status,
-               COALESCE(notes, '') AS notes
+               COALESCE(notes, '') AS notes,
+               applied_at, screening_at, interview_at, offer_at
         FROM jobs
         WHERE applied=1 AND dismissed=0
         ORDER BY scraped_at DESC
@@ -420,7 +460,8 @@ def get_kanban_jobs() -> dict[str, list[dict]]:
         SELECT id, title, company, location, url, source, job_type,
                ROUND(match_score::numeric * 100)::integer AS match_pct,
                COALESCE(kanban_status, 'applied') AS kanban_status,
-               COALESCE(notes, '') AS notes
+               COALESCE(notes, '') AS notes,
+               applied_at, screening_at, interview_at, offer_at
         FROM jobs
         WHERE applied=1 AND dismissed=0
         ORDER BY scraped_at DESC
@@ -433,11 +474,13 @@ def get_kanban_jobs() -> dict[str, list[dict]]:
         else:
             rows = [dict(r) for r in conn.execute(sql_sqlite).fetchall()]
 
+    stage_start_column = {"applied": "applied_at", **_STAGE_TIMESTAMP_COLUMNS}
     columns: dict[str, list[dict]] = {"applied": [], "screening": [], "interview": [], "offer": []}
     for row in rows:
         col = row.get("kanban_status") or "applied"
         if col not in columns:
             col = "applied"
+        row["days_in_stage"] = _days_since(row.get(stage_start_column[col]))
         columns[col].append(row)
     return columns
 

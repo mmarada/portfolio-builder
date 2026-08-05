@@ -43,6 +43,8 @@
   .tag-match-mid  { background: #fef9c3; color: #ca8a04; }
   .tag-match-low  { background: #fee2e2; color: #dc2626; }
   .tag-source { background: #f1f5f9; color: #475569; }
+  .tag-age { background: #f1f5f9; color: #64748b; }
+  .tag-age-stale { background: #fef3c7; color: #b45309; }
   .card-link { font-size: 11px; color: #0369a1; text-decoration: none; display: inline-block; margin-top: 6px; }
   .card-link:hover { text-decoration: underline; }
   .empty-col { font-size: 12px; color: #94a3b8; text-align: center; padding: 20px 8px; }
@@ -103,6 +105,10 @@
             {% set pct = job.match_pct | int %}
             <span class="tag {% if pct >= 75 %}tag-match-high{% elif pct >= 55 %}tag-match-mid{% else %}tag-match-low{% endif %}">{{ pct }}%</span>
             <span class="tag tag-source">{{ job.source }}</span>
+            {% if job.days_in_stage is not none %}
+            <span class="tag {% if job.days_in_stage >= 14 %}tag-age-stale{% else %}tag-age{% endif %}"
+                  title="Time in {{ job.kanban_status }} stage">{{ job.days_in_stage }}d</span>
+            {% endif %}
           </div>
           <a class="card-link" href="{{ job.url }}" target="_blank" onclick="event.stopPropagation()">View ↗</a>
           {% if job.notes %}
