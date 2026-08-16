@@ -430,8 +430,8 @@ def update_job_note(job_id: int, note: str):
             conn.execute(f"UPDATE jobs SET notes={ph} WHERE id={ph}", (note, job_id))
 
 
-def _days_since(ts) -> Optional[int]:
-    """Whole days elapsed since a stored timestamp (SQLite TEXT or Postgres TIMESTAMPTZ)."""
+def _parse_ts(ts) -> Optional[datetime]:
+    """Normalize a stored timestamp (SQLite TEXT or Postgres TIMESTAMPTZ) into an aware datetime."""
     if not ts:
         return None
     if isinstance(ts, str):
@@ -441,7 +441,23 @@ def _days_since(ts) -> Optional[int]:
             return None
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
-    return max(0, (datetime.now(timezone.utc) - ts).days)
+    return ts
+
+
+def _days_since(ts) -> Optional[int]:
+    """Whole days elapsed since a stored timestamp (SQLite TEXT or Postgres TIMESTAMPTZ)."""
+    parsed = _parse_ts(ts)
+    if parsed is None:
+        return None
+    return max(0, (datetime.now(timezone.utc) - parsed).days)
+
+
+def _days_between(start_ts, end_ts) -> Optional[float]:
+    """Days elapsed from start_ts to end_ts, or None if either is missing/unparsable."""
+    start, end = _parse_ts(start_ts), _parse_ts(end_ts)
+    if start is None or end is None:
+        return None
+    return max(0.0, (end - start).total_seconds() / 86400)
 
 
 def get_kanban_jobs() -> dict[str, list[dict]]:
@@ -483,6 +499,45 @@ def get_kanban_jobs() -> dict[str, list[dict]]:
         row["days_in_stage"] = _days_since(row.get(stage_start_column[col]))
         columns[col].append(row)
     return columns
+
+
+# Consecutive kanban transitions, in funnel order.
+_FUNNEL_TRANSITIONS = [
+    ("applied", "screening", "applied_at", "screening_at"),
+    ("screening", "interview", "screening_at", "interview_at"),
+    ("interview", "offer", "interview_at", "offer_at"),
+]
+
+
+def get_funnel_stats() -> list[dict]:
+    """Average days spent between each pair of consecutive kanban stages, across all applications.
+
+    Only counts jobs that actually reached the later stage (i.e. both timestamps are set),
+    so an application still sitting in "screening" doesn't skew the applied→screening average.
+    """
+    with get_conn() as conn:
+        if _pg():
+            cur = conn.cursor()
+            cur.execute("SELECT applied_at, screening_at, interview_at, offer_at FROM jobs WHERE applied=1 AND dismissed=0")
+            rows = [dict(r) for r in cur.fetchall()]
+        else:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT applied_at, screening_at, interview_at, offer_at FROM jobs WHERE applied=1 AND dismissed=0"
+            ).fetchall()]
+
+    stats = []
+    for from_stage, to_stage, from_col, to_col in _FUNNEL_TRANSITIONS:
+        deltas = [
+            d for d in (_days_between(row.get(from_col), row.get(to_col)) for row in rows)
+            if d is not None
+        ]
+        stats.append({
+            "from_stage": from_stage,
+            "to_stage": to_stage,
+            "count": len(deltas),
+            "avg_days": round(sum(deltas) / len(deltas), 1) if deltas else None,
+        })
+    return stats
 
 
 def get_applied_jobs() -> list[dict]:

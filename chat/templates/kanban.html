@@ -62,6 +62,15 @@
   .note-box textarea { width: 100%; font: inherit; font-size: 11px; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; resize: vertical; min-height: 44px; }
   .note-saved { font-size: 10px; color: #16a34a; margin-left: 6px; opacity: 0; transition: opacity .2s; }
   .note-saved.show { opacity: 1; }
+
+  /* Funnel stats */
+  .funnel-bar { display: flex; align-items: center; gap: 0; padding: 10px 24px; background: #fff; border-bottom: 1px solid #e2e8f0; overflow-x: auto; }
+  .funnel-stat { display: flex; flex-direction: column; align-items: center; padding: 0 18px; white-space: nowrap; }
+  .funnel-stat-value { font-size: 15px; font-weight: 700; color: #0f172a; }
+  .funnel-stat-value.no-data { color: #cbd5e1; font-weight: 600; }
+  .funnel-stat-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .04em; margin-top: 2px; }
+  .funnel-stat-count { font-size: 10px; color: #94a3b8; margin-top: 1px; }
+  .funnel-arrow { color: #cbd5e1; font-size: 16px; }
 </style>
 </head>
 <body>
@@ -70,6 +79,22 @@
   <h1>📋 Application Kanban</h1>
   <a href="/">← Back to Job List</a>
   <span style="margin-left:auto;font-size:12px;color:#64748b">Drag cards between columns to track your progress</span>
+</div>
+
+<div class="funnel-bar">
+  {% set stage_labels = {"applied": "Applied", "screening": "Screening", "interview": "Interview", "offer": "Offer"} %}
+  {% for stat in funnel_stats %}
+    {% if not loop.first %}<span class="funnel-arrow">→</span>{% endif %}
+    <div class="funnel-stat">
+      {% if stat.avg_days is not none %}
+        <span class="funnel-stat-value">{{ stat.avg_days }}d avg</span>
+      {% else %}
+        <span class="funnel-stat-value no-data">—</span>
+      {% endif %}
+      <span class="funnel-stat-label">{{ stage_labels[stat.from_stage] }} → {{ stage_labels[stat.to_stage] }}</span>
+      <span class="funnel-stat-count">{{ stat.count }} application{{ "s" if stat.count != 1 else "" }}</span>
+    </div>
+  {% endfor %}
 </div>
 
 <div class="board">

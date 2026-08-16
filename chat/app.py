@@ -21,7 +21,7 @@ from ai.resume_parser import parse_resume
 from db.database import (
     init_db, get_top_jobs, get_distinct_sources, get_job, dismiss_job,
     mark_applied, get_stats, get_applied_jobs, get_all_jobs_for_export,
-    get_kanban_jobs, update_kanban_status, update_job_note,
+    get_kanban_jobs, update_kanban_status, update_job_note, get_funnel_stats,
 )
 from config import RESUME_DIR
 
@@ -178,7 +178,15 @@ async def api_applied(job_id: int):
 @app.get("/kanban", response_class=HTMLResponse)
 async def kanban_page(request: Request):
     columns = get_kanban_jobs()
-    return templates.TemplateResponse("kanban.html", {"request": request, "columns": columns})
+    funnel_stats = get_funnel_stats()
+    return templates.TemplateResponse(
+        "kanban.html", {"request": request, "columns": columns, "funnel_stats": funnel_stats}
+    )
+
+
+@app.get("/api/kanban/funnel-stats")
+async def api_funnel_stats():
+    return {"stages": get_funnel_stats()}
 
 
 @app.patch("/api/jobs/{job_id}/kanban-status")
