@@ -92,8 +92,8 @@ async def export_applied_csv():
 
 
 @app.get("/api/jobs/export/all.csv")
-async def export_all_csv():
-    jobs = get_all_jobs_for_export()
+async def export_all_csv(status: Optional[str] = None):
+    jobs = get_all_jobs_for_export(status=status or None)
     buf = io.StringIO()
     writer = csv.DictWriter(
         buf,
@@ -103,10 +103,11 @@ async def export_all_csv():
     writer.writeheader()
     writer.writerows(jobs)
     buf.seek(0)
+    filename = f"all_jobs_{status.replace(' ', '_')}.csv" if status else "all_jobs.csv"
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=all_jobs.csv"},
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 

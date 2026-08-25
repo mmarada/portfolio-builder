@@ -567,8 +567,13 @@ def get_applied_jobs() -> list[dict]:
             return [dict(r) for r in conn.execute(sql_sqlite).fetchall()]
 
 
-def get_all_jobs_for_export() -> list[dict]:
-    """Return every non-dismissed job with a computed status column, most recent first."""
+def get_all_jobs_for_export(status: str | None = None) -> list[dict]:
+    """Return every non-dismissed job with a computed status column, most recent first.
+
+    status is matched against the computed column ('not applied', 'applied',
+    'screening', 'interview', 'offer'), not the raw kanban_status/applied
+    columns, so filtering happens in Python after the rows are assembled.
+    """
     sql_sqlite = """
         SELECT id, title, company, location, url, source, job_type,
                ROUND(match_score * 100) AS match_pct,
@@ -598,6 +603,9 @@ def get_all_jobs_for_export() -> list[dict]:
     for row in rows:
         row["status"] = row["kanban_status"] if row.pop("applied") else "not applied"
         row.pop("kanban_status", None)
+
+    if status:
+        rows = [r for r in rows if r["status"] == status]
     return rows
 
 
