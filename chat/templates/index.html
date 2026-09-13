@@ -15,6 +15,7 @@
   .sidebar-header h1 { font-size: 16px; font-weight: 700; }
   .upload-btn { font-size: 12px; background: #0f172a; color: #fff; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
   .export-btn { font-size: 12px; background: #16a34a; color: #fff; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; text-decoration: none; }
+  .export-status-select { font-size: 11px; color: #475569; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 6px; background: #f8fafc; cursor: pointer; font-family: inherit; }
   /* Job type checkboxes */
   .type-bar { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; display: flex; gap: 14px; align-items: center; }
   .type-bar label { font-size: 12px; font-weight: 500; color: #374151; display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
@@ -108,7 +109,15 @@
       <div style="display:flex;gap:6px;align-items:center">
         <a href="/kanban" class="export-btn" style="background:#7c3aed">Kanban</a>
         <a href="/api/jobs/export/applied.csv" class="export-btn" download>Export Applied</a>
-        <a href="/api/jobs/export/all.csv" class="export-btn" download>Export All</a>
+        <select id="export-status-filter" class="export-status-select" onchange="updateExportLinks()" title="Filter export by status">
+          <option value="">All statuses</option>
+          <option value="not applied">Not applied</option>
+          <option value="applied">Applied</option>
+          <option value="screening">Screening</option>
+          <option value="interview">Interview</option>
+          <option value="offer">Offer</option>
+        </select>
+        <a id="export-all-link" href="/api/jobs/export/all.csv" class="export-btn" download>Export All</a>
         <button class="upload-btn" onclick="document.getElementById('resumeInput').click()">Upload Resume</button>
       </div>
       <input type="file" id="resumeInput" accept=".pdf,.docx,.doc,.txt" style="display:none" onchange="uploadResume(this)">
@@ -254,6 +263,13 @@
   let currentJobId = {{ selected_job.id if selected_job else 'null' }};
   const activeSource  = "{{ active_source }}";
   const activeJobType = "{{ active_job_type }}";
+
+  // ── Export status filter ─────────────────────────────────────────────────
+  function updateExportLinks() {
+    const status = document.getElementById('export-status-filter').value;
+    const link = document.getElementById('export-all-link');
+    link.href = status ? `/api/jobs/export/all.csv?status=${encodeURIComponent(status)}` : '/api/jobs/export/all.csv';
+  }
 
   // ── Search ────────────────────────────────────────────────────────────────
   function filterJobs() {
