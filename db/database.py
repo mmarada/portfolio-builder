@@ -6,7 +6,7 @@ Dual-mode database layer.
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 _PG_URL = os.getenv("DATABASE_URL", "")
@@ -509,11 +509,15 @@ _FUNNEL_TRANSITIONS = [
 ]
 
 
-def get_funnel_stats() -> list[dict]:
-    """Average days spent between each pair of consecutive kanban stages, across all applications.
+def get_funnel_stats(window_days: Optional[int] = None) -> list[dict]:
+    """Average days spent between each pair of consecutive kanban stages.
 
     Only counts jobs that actually reached the later stage (i.e. both timestamps are set),
     so an application still sitting in "screening" doesn't skew the applied→screening average.
+
+    When window_days is given, only transitions that completed (reached to_stage) within
+    that many days of now are counted, so the averages reflect recent activity instead of
+    smoothing over the entire history once volume grows.
     """
     with get_conn() as conn:
         if _pg():
@@ -525,12 +529,19 @@ def get_funnel_stats() -> list[dict]:
                 "SELECT applied_at, screening_at, interview_at, offer_at FROM jobs WHERE applied=1 AND dismissed=0"
             ).fetchall()]
 
+    cutoff = datetime.now(timezone.utc) - timedelta(days=window_days) if window_days else None
+
     stats = []
     for from_stage, to_stage, from_col, to_col in _FUNNEL_TRANSITIONS:
-        deltas = [
-            d for d in (_days_between(row.get(from_col), row.get(to_col)) for row in rows)
-            if d is not None
-        ]
+        deltas = []
+        for row in rows:
+            if cutoff is not None:
+                completed_at = _parse_ts(row.get(to_col))
+                if completed_at is None or completed_at < cutoff:
+                    continue
+            d = _days_between(row.get(from_col), row.get(to_col))
+            if d is not None:
+                deltas.append(d)
         stats.append({
             "from_stage": from_stage,
             "to_stage": to_stage,

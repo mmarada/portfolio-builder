@@ -177,17 +177,18 @@ async def api_applied(job_id: int):
 
 
 @app.get("/kanban", response_class=HTMLResponse)
-async def kanban_page(request: Request):
+async def kanban_page(request: Request, window: Optional[int] = None):
     columns = get_kanban_jobs()
-    funnel_stats = get_funnel_stats()
+    funnel_stats = get_funnel_stats(window)
     return templates.TemplateResponse(
-        "kanban.html", {"request": request, "columns": columns, "funnel_stats": funnel_stats}
+        "kanban.html",
+        {"request": request, "columns": columns, "funnel_stats": funnel_stats, "window": window},
     )
 
 
 @app.get("/api/kanban/funnel-stats")
-async def api_funnel_stats():
-    return {"stages": get_funnel_stats()}
+async def api_funnel_stats(window: Optional[int] = None):
+    return {"stages": get_funnel_stats(window)}
 
 
 @app.patch("/api/jobs/{job_id}/kanban-status")

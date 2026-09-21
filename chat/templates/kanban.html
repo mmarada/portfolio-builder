@@ -73,6 +73,7 @@
   .funnel-stat-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .04em; margin-top: 2px; }
   .funnel-stat-count { font-size: 10px; color: #94a3b8; margin-top: 1px; }
   .funnel-arrow { color: #cbd5e1; font-size: 16px; }
+  .funnel-window { margin-left: auto; font-size: 11px; color: #64748b; border: 1px solid #e2e8f0; border-radius: 6px; padding: 3px 6px; background: #f8fafc; }
 </style>
 </head>
 <body>
@@ -97,6 +98,12 @@
       <span class="funnel-stat-count">{{ stat.count }} application{{ "s" if stat.count != 1 else "" }}</span>
     </div>
   {% endfor %}
+  <select class="funnel-window" onchange="location.href = this.value ? `/kanban?window=${this.value}` : '/kanban'">
+    <option value="" {{ "selected" if not window else "" }}>All time</option>
+    <option value="30" {{ "selected" if window == 30 else "" }}>Last 30 days</option>
+    <option value="60" {{ "selected" if window == 60 else "" }}>Last 60 days</option>
+    <option value="90" {{ "selected" if window == 90 else "" }}>Last 90 days</option>
+  </select>
 </div>
 
 <div class="board">
