@@ -55,9 +55,17 @@ CREATE TABLE IF NOT EXISTS drafts (
     created_at     TEXT DEFAULT (datetime('now')),
     sent           INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS notes_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id     INTEGER REFERENCES jobs(id),
+    body       TEXT NOT NULL DEFAULT '',
+    stage      TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
 CREATE INDEX IF NOT EXISTS idx_jobs_score  ON jobs(match_score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_scraped ON jobs(scraped_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_source  ON jobs(source);
+CREATE INDEX IF NOT EXISTS idx_notes_log_job ON notes_log(job_id, id);
 """
 
 _SCHEMA_PG = """
@@ -97,6 +105,13 @@ CREATE TABLE IF NOT EXISTS drafts (
     created_at     TIMESTAMPTZ DEFAULT NOW(),
     sent           INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS notes_log (
+    id         SERIAL PRIMARY KEY,
+    job_id     INTEGER REFERENCES jobs(id),
+    body       TEXT NOT NULL DEFAULT '',
+    stage      TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 CREATE INDEX IF NOT EXISTS idx_jobs_score   ON jobs(match_score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_scraped ON jobs(scraped_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_source  ON jobs(source);
@@ -106,6 +121,7 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS screening_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interview_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS offer_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_notes_log_job ON notes_log(job_id, id);
 """
 
 _MIGRATIONS_SQLITE = [
@@ -421,13 +437,58 @@ def update_kanban_status(job_id: int, status: str):
             conn.execute(sql, (status, job_id))
 
 
-def update_job_note(job_id: int, note: str):
+def update_job_note(job_id: int, note: str) -> bool:
+    """
+    Set the job's current note and append it to notes_log.
+    jobs.notes stays the "latest" value the board renders; notes_log keeps every
+    revision (including clears) so saving never destroys what was there before.
+    A save that doesn't change the text is a no-op. Returns True if a revision was logged.
+    """
     ph = "%s" if _pg() else "?"
     with get_conn() as conn:
-        if _pg():
-            conn.cursor().execute(f"UPDATE jobs SET notes={ph} WHERE id={ph}", (note, job_id))
-        else:
-            conn.execute(f"UPDATE jobs SET notes={ph} WHERE id={ph}", (note, job_id))
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT COALESCE(notes, '') AS notes, COALESCE(kanban_status, 'applied') AS stage "
+            f"FROM jobs WHERE id={ph}",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return False
+        row = _row_to_dict(row)
+        current, stage = row["notes"], row["stage"]
+        if note == current:
+            return False
+        cur.execute(f"SELECT COUNT(*) AS n FROM notes_log WHERE job_id={ph}", (job_id,))
+        if _row_to_dict(cur.fetchone())["n"] == 0 and current:
+            # Note written before history existed: keep it as an undated first entry
+            # instead of letting this save be the first thing ever recorded.
+            cur.execute(
+                f"INSERT INTO notes_log (job_id, body, stage, created_at) VALUES ({ph}, {ph}, NULL, NULL)",
+                (job_id, current),
+            )
+        cur.execute(
+            f"INSERT INTO notes_log (job_id, body, stage) VALUES ({ph}, {ph}, {ph})",
+            (job_id, note, stage),
+        )
+        cur.execute(f"UPDATE jobs SET notes={ph} WHERE id={ph}", (note, job_id))
+    return True
+
+
+def get_note_history(job_id: int) -> list[dict]:
+    """Every saved revision of a job's note, newest first. created_at is None for pre-history notes."""
+    ph = "%s" if _pg() else "?"
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT id, body, stage, created_at FROM notes_log WHERE job_id={ph} ORDER BY id DESC",
+            (job_id,),
+        )
+        rows = [_row_to_dict(r) for r in cur.fetchall()]
+    for r in rows:
+        ts = _parse_ts(r["created_at"])
+        r["created_at"] = ts.isoformat() if ts else None
+    return rows
 
 
 def _parse_ts(ts) -> Optional[datetime]:

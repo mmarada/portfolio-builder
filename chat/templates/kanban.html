@@ -64,6 +64,11 @@
   .note-box textarea { width: 100%; font: inherit; font-size: 11px; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; resize: vertical; min-height: 44px; }
   .note-saved { font-size: 10px; color: #16a34a; margin-left: 6px; opacity: 0; transition: opacity .2s; }
   .note-saved.show { opacity: 1; }
+  .note-history-btn { font-size: 10px; padding: 1px 6px; border-radius: 99px; border: 1px solid #e2e8f0; background: #fff; color: #64748b; cursor: pointer; margin-top: 4px; }
+  .note-history { margin-top: 6px; border-left: 2px solid #e2e8f0; padding-left: 8px; max-height: 180px; overflow-y: auto; }
+  .note-rev { font-size: 11px; color: #475569; margin-bottom: 6px; white-space: pre-wrap; word-break: break-word; }
+  .note-rev-meta { font-size: 10px; color: #94a3b8; }
+  .note-rev-cleared { font-style: italic; color: #94a3b8; }
 
   /* Funnel stats */
   .funnel-bar { display: flex; align-items: center; gap: 0; padding: 10px 24px; background: #fff; border-bottom: 1px solid #e2e8f0; overflow-x: auto; }
@@ -153,6 +158,8 @@
             <textarea id="note-input-{{ job.id }}" placeholder="Add a note…" maxlength="2000"
                       onblur="saveNote({{ job.id }})">{{ job.notes }}</textarea>
             <span class="note-saved" id="note-saved-{{ job.id }}">Saved</span>
+            <button class="note-history-btn" onclick="toggleNoteHistory({{ job.id }})">🕘 History</button>
+            <div class="note-history" id="note-history-{{ job.id }}" style="display:none"></div>
           </div>
           <div class="card-actions">
             {% for next_id, next_label in [("applied","Applied"),("screening","Screening"),("interview","Interview"),("offer","Offer")] %}
@@ -313,9 +320,56 @@
       }
       savedTag.classList.add('show');
       setTimeout(() => savedTag.classList.remove('show'), 1200);
+      const history = document.getElementById(`note-history-${jobId}`);
+      if (history.style.display !== 'none') loadNoteHistory(jobId);
     } catch (_) {
       // leave textarea open with unsaved text on failure
     }
+  }
+
+  function formatRevTime(iso) {
+    if (!iso) return 'before history was kept';
+    return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  async function loadNoteHistory(jobId) {
+    const box = document.getElementById(`note-history-${jobId}`);
+    box.textContent = 'Loading…';
+    try {
+      const r = await fetch(`/api/jobs/${jobId}/notes`);
+      if (!r.ok) throw new Error('server error');
+      const { history } = await r.json();
+      box.innerHTML = '';
+      if (!history.length) {
+        box.textContent = 'No earlier versions yet.';
+        return;
+      }
+      for (const rev of history) {
+        const item = document.createElement('div');
+        item.className = 'note-rev';
+        const meta = document.createElement('div');
+        meta.className = 'note-rev-meta';
+        meta.textContent = formatRevTime(rev.created_at) + (rev.stage ? ` · ${COL_LABELS[rev.stage] || rev.stage}` : '');
+        const body = document.createElement('div');
+        if (rev.body) {
+          body.textContent = rev.body;
+        } else {
+          body.className = 'note-rev-cleared';
+          body.textContent = '(note cleared)';
+        }
+        item.append(meta, body);
+        box.appendChild(item);
+      }
+    } catch (_) {
+      box.textContent = 'Could not load history.';
+    }
+  }
+
+  function toggleNoteHistory(jobId) {
+    const box = document.getElementById(`note-history-${jobId}`);
+    const open = box.style.display !== 'none';
+    box.style.display = open ? 'none' : 'block';
+    if (!open) loadNoteHistory(jobId);
   }
 </script>
 </body>
