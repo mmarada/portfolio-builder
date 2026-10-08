@@ -69,6 +69,8 @@
   .note-rev { font-size: 11px; color: #475569; margin-bottom: 6px; white-space: pre-wrap; word-break: break-word; }
   .note-rev-meta { font-size: 10px; color: #94a3b8; }
   .note-rev-cleared { font-style: italic; color: #94a3b8; }
+  .note-rev-restore { font-size: 10px; color: #4f46e5; background: none; border: none; padding: 0; margin-left: 6px; cursor: pointer; text-decoration: underline; }
+  .note-rev-restore:disabled { color: #94a3b8; cursor: default; text-decoration: none; }
 
   /* Funnel stats */
   .funnel-bar { display: flex; align-items: center; gap: 0; padding: 10px 24px; background: #fff; border-bottom: 1px solid #e2e8f0; overflow-x: auto; }
@@ -297,33 +299,60 @@
     if (!open) document.getElementById(`note-input-${jobId}`).focus();
   }
 
-  async function saveNote(jobId) {
+  // In-flight note saves per job. Clicking Restore blurs the textarea first, which
+  // fires saveNote; restoreNote waits on it so unsaved edits are logged before the
+  // restore lands, instead of racing it and being written on top of the restore.
+  const pendingNoteSaves = {};
+
+  function renderNote(jobId, note) {
     const textarea = document.getElementById(`note-input-${jobId}`);
-    const note = textarea.value.trim();
-    const btn = document.getElementById(`note-btn-${jobId}`);
-    const savedTag = document.getElementById(`note-saved-${jobId}`);
-    try {
-      const r = await fetch(`/api/jobs/${jobId}/note?note=${encodeURIComponent(note)}`, { method: 'PATCH' });
-      if (!r.ok) throw new Error('server error');
-      btn.classList.toggle('has-note', note.length > 0);
-      let preview = document.getElementById(`note-preview-${jobId}`);
-      if (note) {
-        if (!preview) {
-          preview = document.createElement('div');
-          preview.className = 'note-preview';
-          preview.id = `note-preview-${jobId}`;
-          textarea.closest('.kanban-card').insertBefore(preview, document.getElementById(`note-box-${jobId}`));
-        }
-        preview.textContent = note;
-      } else if (preview) {
-        preview.remove();
+    document.getElementById(`note-btn-${jobId}`).classList.toggle('has-note', note.length > 0);
+    let preview = document.getElementById(`note-preview-${jobId}`);
+    if (note) {
+      if (!preview) {
+        preview = document.createElement('div');
+        preview.className = 'note-preview';
+        preview.id = `note-preview-${jobId}`;
+        textarea.closest('.kanban-card').insertBefore(preview, document.getElementById(`note-box-${jobId}`));
       }
-      savedTag.classList.add('show');
-      setTimeout(() => savedTag.classList.remove('show'), 1200);
-      const history = document.getElementById(`note-history-${jobId}`);
-      if (history.style.display !== 'none') loadNoteHistory(jobId);
+      preview.textContent = note;
+    } else if (preview) {
+      preview.remove();
+    }
+    const savedTag = document.getElementById(`note-saved-${jobId}`);
+    savedTag.classList.add('show');
+    setTimeout(() => savedTag.classList.remove('show'), 1200);
+    const history = document.getElementById(`note-history-${jobId}`);
+    if (history.style.display !== 'none') loadNoteHistory(jobId);
+  }
+
+  function saveNote(jobId) {
+    const note = document.getElementById(`note-input-${jobId}`).value.trim();
+    const save = (async () => {
+      try {
+        const r = await fetch(`/api/jobs/${jobId}/note?note=${encodeURIComponent(note)}`, { method: 'PATCH' });
+        if (!r.ok) throw new Error('server error');
+        renderNote(jobId, note);
+      } catch (_) {
+        // leave textarea open with unsaved text on failure
+      }
+    })();
+    pendingNoteSaves[jobId] = save;
+    return save;
+  }
+
+  async function restoreNote(jobId, revisionId, btn) {
+    btn.disabled = true;
+    await pendingNoteSaves[jobId];
+    try {
+      const r = await fetch(`/api/jobs/${jobId}/notes/${revisionId}/restore`, { method: 'POST' });
+      if (!r.ok) throw new Error('server error');
+      const { notes } = await r.json();
+      document.getElementById(`note-input-${jobId}`).value = notes;
+      renderNote(jobId, notes);
     } catch (_) {
-      // leave textarea open with unsaved text on failure
+      btn.disabled = false;
+      btn.textContent = 'Restore failed, retry';
     }
   }
 
@@ -344,12 +373,26 @@
         box.textContent = 'No earlier versions yet.';
         return;
       }
+      // Newest revision is always the current note: every change logs one.
+      const current = history[0].body;
+      const byId = Object.fromEntries(history.map(rev => [rev.id, rev]));
       for (const rev of history) {
         const item = document.createElement('div');
         item.className = 'note-rev';
         const meta = document.createElement('div');
         meta.className = 'note-rev-meta';
         meta.textContent = formatRevTime(rev.created_at) + (rev.stage ? ` · ${COL_LABELS[rev.stage] || rev.stage}` : '');
+        if (rev.restored_from) {
+          const src = byId[rev.restored_from];
+          meta.textContent += src ? ` · restored from ${formatRevTime(src.created_at)}` : ' · restored';
+        }
+        if (rev.body !== current) {
+          const restore = document.createElement('button');
+          restore.className = 'note-rev-restore';
+          restore.textContent = 'Restore';
+          restore.onclick = () => restoreNote(jobId, rev.id, restore);
+          meta.appendChild(restore);
+        }
         const body = document.createElement('div');
         if (rev.body) {
           body.textContent = rev.body;

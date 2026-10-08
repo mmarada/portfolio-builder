@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS notes_log (
     job_id     INTEGER REFERENCES jobs(id),
     body       TEXT NOT NULL DEFAULT '',
     stage      TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    restored_from INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_score  ON jobs(match_score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_scraped ON jobs(scraped_at DESC);
@@ -110,7 +111,8 @@ CREATE TABLE IF NOT EXISTS notes_log (
     job_id     INTEGER REFERENCES jobs(id),
     body       TEXT NOT NULL DEFAULT '',
     stage      TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    restored_from INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_score   ON jobs(match_score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_scraped ON jobs(scraped_at DESC);
@@ -121,6 +123,7 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS screening_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interview_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS offer_at TIMESTAMPTZ;
+ALTER TABLE notes_log ADD COLUMN IF NOT EXISTS restored_from INTEGER;
 CREATE INDEX IF NOT EXISTS idx_notes_log_job ON notes_log(job_id, id);
 """
 
@@ -133,6 +136,7 @@ _MIGRATIONS_SQLITE = [
     "ALTER TABLE jobs ADD COLUMN screening_at TEXT",
     "ALTER TABLE jobs ADD COLUMN interview_at TEXT",
     "ALTER TABLE jobs ADD COLUMN offer_at TEXT",
+    "ALTER TABLE notes_log ADD COLUMN restored_from INTEGER",
 ]
 
 # Stage → timestamp column, for stamping first-time kanban transitions.
@@ -437,12 +441,13 @@ def update_kanban_status(job_id: int, status: str):
             conn.execute(sql, (status, job_id))
 
 
-def update_job_note(job_id: int, note: str) -> bool:
+def update_job_note(job_id: int, note: str, restored_from: Optional[int] = None) -> bool:
     """
     Set the job's current note and append it to notes_log.
     jobs.notes stays the "latest" value the board renders; notes_log keeps every
     revision (including clears) so saving never destroys what was there before.
     A save that doesn't change the text is a no-op. Returns True if a revision was logged.
+    restored_from is the notes_log id this text was copied back from, if any.
     """
     ph = "%s" if _pg() else "?"
     with get_conn() as conn:
@@ -468,8 +473,8 @@ def update_job_note(job_id: int, note: str) -> bool:
                 (job_id, current),
             )
         cur.execute(
-            f"INSERT INTO notes_log (job_id, body, stage) VALUES ({ph}, {ph}, {ph})",
-            (job_id, note, stage),
+            f"INSERT INTO notes_log (job_id, body, stage, restored_from) VALUES ({ph}, {ph}, {ph}, {ph})",
+            (job_id, note, stage, restored_from),
         )
         cur.execute(f"UPDATE jobs SET notes={ph} WHERE id={ph}", (note, job_id))
     return True
@@ -481,7 +486,7 @@ def get_note_history(job_id: int) -> list[dict]:
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            f"SELECT id, body, stage, created_at FROM notes_log WHERE job_id={ph} ORDER BY id DESC",
+            f"SELECT id, body, stage, created_at, restored_from FROM notes_log WHERE job_id={ph} ORDER BY id DESC",
             (job_id,),
         )
         rows = [_row_to_dict(r) for r in cur.fetchall()]
@@ -489,6 +494,28 @@ def get_note_history(job_id: int) -> list[dict]:
         ts = _parse_ts(r["created_at"])
         r["created_at"] = ts.isoformat() if ts else None
     return rows
+
+
+def restore_note_revision(job_id: int, revision_id: int) -> Optional[dict]:
+    """
+    Make a past revision the job's current note again.
+    The restore is itself a new revision (restored_from = revision_id), so history
+    stays append-only and an accidental restore can be undone the same way.
+    Returns None if the revision doesn't exist or belongs to a different job.
+    """
+    ph = "%s" if _pg() else "?"
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT body FROM notes_log WHERE id={ph} AND job_id={ph}",
+            (revision_id, job_id),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    body = _row_to_dict(row)["body"] or ""
+    logged = update_job_note(job_id, body, restored_from=revision_id)
+    return {"notes": body, "logged": logged}
 
 
 def _parse_ts(ts) -> Optional[datetime]:

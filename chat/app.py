@@ -22,6 +22,7 @@ from db.database import (
     init_db, get_top_jobs, get_distinct_sources, get_job, dismiss_job,
     mark_applied, get_stats, get_applied_jobs, get_all_jobs_for_export,
     get_kanban_jobs, update_kanban_status, update_job_note, get_note_history, get_funnel_stats,
+    restore_note_revision,
 )
 from config import RESUME_DIR
 
@@ -210,6 +211,14 @@ async def api_job_note(job_id: int, note: str = ""):
 @app.get("/api/jobs/{job_id}/notes")
 async def api_job_note_history(job_id: int):
     return {"history": get_note_history(job_id)}
+
+
+@app.post("/api/jobs/{job_id}/notes/{revision_id}/restore")
+async def api_job_note_restore(job_id: int, revision_id: int):
+    result = restore_note_revision(job_id, revision_id)
+    if result is None:
+        raise HTTPException(404, "revision not found for this job")
+    return result
 
 
 @app.post("/api/chat")
