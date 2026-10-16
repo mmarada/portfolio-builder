@@ -124,7 +124,9 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS screening_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interview_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS offer_at TIMESTAMPTZ;
 ALTER TABLE notes_log ADD COLUMN IF NOT EXISTS restored_from INTEGER;
+ALTER TABLE notes_log ADD COLUMN IF NOT EXISTS source_id INTEGER;
 CREATE INDEX IF NOT EXISTS idx_notes_log_job ON notes_log(job_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_log_source ON notes_log(job_id, source_id);
 """
 
 _MIGRATIONS_SQLITE = [
@@ -726,7 +728,8 @@ def get_draft(job_id: int) -> dict | None:
 
 def sync_sqlite_to_postgres(pg_url: str):
     """
-    Push all local SQLite jobs to a PostgreSQL database.
+    Push all local SQLite jobs to a PostgreSQL database, along with each job's
+    kanban note and its full notes_log history.
     Called from main.py after each scrape run when POSTGRES_SYNC_URL is set.
     """
     import psycopg2
@@ -736,7 +739,11 @@ def sync_sqlite_to_postgres(pg_url: str):
     sqlite_conn = sqlite3.connect(DB_PATH)
     sqlite_conn.row_factory = sqlite3.Row
     jobs = sqlite_conn.execute("SELECT * FROM jobs").fetchall()
-    contacts = sqlite_conn.execute("SELECT * FROM contacts").fetchall()
+    revisions: dict[int, list[dict]] = {}
+    for r in sqlite_conn.execute(
+        "SELECT id, job_id, body, stage, created_at, restored_from FROM notes_log ORDER BY id"
+    ).fetchall():
+        revisions.setdefault(r["job_id"], []).append(dict(r))
     sqlite_conn.close()
 
     pg = psycopg2.connect(pg_url, cursor_factory=psycopg2.extras.RealDictCursor)
@@ -754,6 +761,8 @@ def sync_sqlite_to_postgres(pg_url: str):
     synced = 0
     for job in jobs:
         j = dict(job)
+        # Savepoint per job: a bad row drops only itself, not every job before it.
+        cur.execute("SAVEPOINT sync_job")
         try:
             cur.execute(
                 """INSERT INTO jobs (source,title,company,location,url,description,
@@ -764,15 +773,64 @@ def sync_sqlite_to_postgres(pg_url: str):
                      description=COALESCE(EXCLUDED.description, jobs.description),
                      digest_sent=EXCLUDED.digest_sent,
                      dismissed=EXCLUDED.dismissed,
-                     applied=EXCLUDED.applied""",
+                     applied=EXCLUDED.applied
+                   RETURNING id""",
                 (j["source"], j["title"], j["company"], j["location"], j["url"],
                  j["description"], j["posted_date"], j["match_score"],
                  j["dismissed"], j["applied"], j["digest_sent"], j.get("job_type","full_time")),
             )
+            pg_job_id = cur.fetchone()["id"]
+            # Without a url the upsert can't find the same row next run, so there's
+            # no stable Postgres job to hang the history on.
+            if j["url"]:
+                _sync_job_notes(cur, pg_job_id, j.get("notes") or "", revisions.get(j["id"], []))
+            cur.execute("RELEASE SAVEPOINT sync_job")
             synced += 1
         except Exception:
-            pg.rollback()
+            cur.execute("ROLLBACK TO SAVEPOINT sync_job")
 
     pg.commit()
     pg.close()
     return synced
+
+
+def _sync_job_notes(cur, pg_job_id: int, local_note: str, local_revisions: list[dict]):
+    """
+    Copy one job's local note revisions into Postgres notes_log.
+    Local and Postgres ids differ, so each copied row keeps its SQLite id in
+    source_id; that makes re-syncing idempotent and lets restored_from be
+    remapped to the Postgres id of the revision it points at. Revisions written
+    on the deployment itself (source_id NULL) are left alone, so nothing either
+    side wrote is ever deleted.
+    """
+    cur.execute(
+        "SELECT id, source_id FROM notes_log WHERE job_id=%s AND source_id IS NOT NULL",
+        (pg_job_id,),
+    )
+    pg_ids = {r["source_id"]: r["id"] for r in cur.fetchall()}
+
+    inserted = 0
+    for rev in local_revisions:
+        if rev["id"] in pg_ids:
+            continue
+        cur.execute(
+            """INSERT INTO notes_log (job_id, body, stage, created_at, restored_from, source_id)
+               VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+            (pg_job_id, rev["body"] or "", rev["stage"], _parse_ts(rev["created_at"]),
+             pg_ids.get(rev["restored_from"]), rev["id"]),
+        )
+        pg_ids[rev["id"]] = cur.fetchone()["id"]
+        inserted += 1
+
+    if inserted:
+        # New local edits arrived: the local note is now the latest revision in
+        # Postgres too, so it becomes the current note. Any edit made on the
+        # deployment in the meantime is still in its history and restorable.
+        cur.execute("UPDATE jobs SET notes=%s WHERE id=%s", (local_note, pg_job_id))
+    elif local_note and not local_revisions:
+        # Note written before history existed and never edited since: fill in an
+        # empty deployment note, but don't overwrite one written there.
+        cur.execute(
+            "UPDATE jobs SET notes=%s WHERE id=%s AND COALESCE(notes, '')=''",
+            (local_note, pg_job_id),
+        )
