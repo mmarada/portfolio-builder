@@ -123,6 +123,7 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS screening_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interview_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS offer_at TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS kanban_updated_at TIMESTAMPTZ;
 ALTER TABLE notes_log ADD COLUMN IF NOT EXISTS restored_from INTEGER;
 ALTER TABLE notes_log ADD COLUMN IF NOT EXISTS source_id INTEGER;
 CREATE INDEX IF NOT EXISTS idx_notes_log_job ON notes_log(job_id, id);
@@ -138,6 +139,7 @@ _MIGRATIONS_SQLITE = [
     "ALTER TABLE jobs ADD COLUMN screening_at TEXT",
     "ALTER TABLE jobs ADD COLUMN interview_at TEXT",
     "ALTER TABLE jobs ADD COLUMN offer_at TEXT",
+    "ALTER TABLE jobs ADD COLUMN kanban_updated_at TEXT",
     "ALTER TABLE notes_log ADD COLUMN restored_from INTEGER",
 ]
 
@@ -147,6 +149,10 @@ _STAGE_TIMESTAMP_COLUMNS = {
     "interview": "interview_at",
     "offer": "offer_at",
 }
+
+# Board order, used to break a status conflict toward the furthest stage when
+# neither side knows when its status was last set.
+_KANBAN_STAGES = ("applied", "screening", "interview", "offer")
 
 # ── Connection context managers ───────────────────────────────────────────────
 
@@ -432,10 +438,13 @@ def update_kanban_status(job_id: int, status: str):
     ph = "%s" if _pg() else "?"
     now_expr = "NOW()" if _pg() else "CURRENT_TIMESTAMP"
     stage_col = _STAGE_TIMESTAMP_COLUMNS.get(status)
+    # kanban_updated_at is stamped on every move (not first-touch like the stage
+    # columns) so Postgres sync can tell which side moved the card last.
+    stamp = f"kanban_status={ph}, kanban_updated_at={now_expr}"
     if stage_col:
-        sql = f"UPDATE jobs SET kanban_status={ph}, {stage_col}=COALESCE({stage_col}, {now_expr}) WHERE id={ph}"
+        sql = f"UPDATE jobs SET {stamp}, {stage_col}=COALESCE({stage_col}, {now_expr}) WHERE id={ph}"
     else:
-        sql = f"UPDATE jobs SET kanban_status={ph} WHERE id={ph}"
+        sql = f"UPDATE jobs SET {stamp} WHERE id={ph}"
     with get_conn() as conn:
         if _pg():
             conn.cursor().execute(sql, (status, job_id))
@@ -729,7 +738,15 @@ def get_draft(job_id: int) -> dict | None:
 def sync_sqlite_to_postgres(pg_url: str):
     """
     Push all local SQLite jobs to a PostgreSQL database, along with each job's
-    kanban note and its full notes_log history.
+    kanban stage, stage timestamps, kanban note and its full notes_log history.
+
+    Both sides can move cards (the deployment has the same board), so job
+    state merges instead of overwriting:
+      - applied only goes 0 -> 1 (nothing un-applies), so it takes the max;
+      - stage timestamps are first-touch, so the earliest non-NULL one wins;
+      - kanban_status follows whichever side moved the card last
+        (kanban_updated_at); if neither side has that stamp (cards moved before
+        it existed) the furthest stage wins, matching the timestamps.
     Called from main.py after each scrape run when POSTGRES_SYNC_URL is set.
     """
     import psycopg2
@@ -766,18 +783,40 @@ def sync_sqlite_to_postgres(pg_url: str):
         try:
             cur.execute(
                 """INSERT INTO jobs (source,title,company,location,url,description,
-                   posted_date,match_score,dismissed,applied,digest_sent,job_type)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   posted_date,match_score,dismissed,applied,digest_sent,job_type,
+                   kanban_status,kanban_updated_at,applied_at,screening_at,interview_at,offer_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (url) DO UPDATE SET
                      match_score=EXCLUDED.match_score,
                      description=COALESCE(EXCLUDED.description, jobs.description),
                      digest_sent=EXCLUDED.digest_sent,
                      dismissed=EXCLUDED.dismissed,
-                     applied=EXCLUDED.applied
+                     applied=GREATEST(jobs.applied, EXCLUDED.applied),
+                     kanban_status=CASE
+                       WHEN EXCLUDED.kanban_updated_at IS NOT NULL
+                        AND (jobs.kanban_updated_at IS NULL
+                             OR EXCLUDED.kanban_updated_at > jobs.kanban_updated_at)
+                         THEN EXCLUDED.kanban_status
+                       WHEN jobs.kanban_updated_at IS NOT NULL
+                         THEN jobs.kanban_status
+                       WHEN COALESCE(array_position(%s::text[], EXCLUDED.kanban_status), 1)
+                          > COALESCE(array_position(%s::text[], jobs.kanban_status), 1)
+                         THEN EXCLUDED.kanban_status
+                       ELSE jobs.kanban_status
+                     END,
+                     kanban_updated_at=GREATEST(jobs.kanban_updated_at, EXCLUDED.kanban_updated_at),
+                     applied_at=LEAST(jobs.applied_at, EXCLUDED.applied_at),
+                     screening_at=LEAST(jobs.screening_at, EXCLUDED.screening_at),
+                     interview_at=LEAST(jobs.interview_at, EXCLUDED.interview_at),
+                     offer_at=LEAST(jobs.offer_at, EXCLUDED.offer_at)
                    RETURNING id""",
                 (j["source"], j["title"], j["company"], j["location"], j["url"],
                  j["description"], j["posted_date"], j["match_score"],
-                 j["dismissed"], j["applied"], j["digest_sent"], j.get("job_type","full_time")),
+                 j["dismissed"], j["applied"], j["digest_sent"], j.get("job_type","full_time"),
+                 j.get("kanban_status") or "applied", _parse_ts(j.get("kanban_updated_at")),
+                 _parse_ts(j.get("applied_at")), _parse_ts(j.get("screening_at")),
+                 _parse_ts(j.get("interview_at")), _parse_ts(j.get("offer_at")),
+                 list(_KANBAN_STAGES), list(_KANBAN_STAGES)),
             )
             pg_job_id = cur.fetchone()["id"]
             # Without a url the upsert can't find the same row next run, so there's
